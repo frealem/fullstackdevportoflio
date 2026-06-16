@@ -1,0 +1,6 @@
+{
+  "name": "Full-Stack Portfolio and Job Engine",
+  "description": "A high-performance interactive portfolio featuring a professional client showcase and a live AI-powered recruiter, resume tailorer, and job finder tracking active remote and Ethiopian engineering jobs on refresh.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
