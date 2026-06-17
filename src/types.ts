@@ -30,6 +30,7 @@ export interface Project {
   liveUrl?: string;
   iconName: string; // Lucide icon reference
   interactiveSandboxType?: "api_simulator" | "regex_tester" | "sql_query_filter";
+  imageUrl?: string;
 }
 
 export interface Job {

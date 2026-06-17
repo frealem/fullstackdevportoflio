@@ -30,7 +30,8 @@ export const PROJECTS: Project[] = [
     githubUrl: "https://github.com/frealem-tekalign/omnipay-gateway",
     liveUrl: "https://omnipay-east-africa.dev",
     iconName: "CreditCard",
-    interactiveSandboxType: "api_simulator"
+    interactiveSandboxType: "api_simulator",
+    imageUrl: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80"
   },
   {
     id: "proj-2",
@@ -42,7 +43,8 @@ export const PROJECTS: Project[] = [
     githubUrl: "https://github.com/frealem-tekalign/velosync-router",
     liveUrl: "https://velosync-logs.dev",
     iconName: "Cpu",
-    interactiveSandboxType: "regex_tester"
+    interactiveSandboxType: "regex_tester",
+    imageUrl: "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=800&q=80"
   },
   {
     id: "proj-3",
@@ -54,6 +56,7 @@ export const PROJECTS: Project[] = [
     githubUrl: "https://github.com/frealem-tekalign/alem-cms",
     liveUrl: "https://alem-cms.dev",
     iconName: "Database",
-    interactiveSandboxType: "sql_query_filter"
+    interactiveSandboxType: "sql_query_filter",
+    imageUrl: "https://images.unsplash.com/photo-1544383835-bda2bc66a55d?auto=format&fit=crop&w=800&q=80"
   }
 ];

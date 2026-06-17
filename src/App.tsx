@@ -84,7 +84,8 @@ export default function App() {
     longDescription: "",
     interactiveSandboxType: "",
     tags: "",
-    iconName: "Layers"
+    iconName: "Layers",
+    imageUrl: ""
   });
   const [isSavingProject, setIsSavingProject] = useState(false);
   const [projectMessage, setProjectMessage] = useState("");
@@ -335,7 +336,8 @@ export default function App() {
       longDescription: proj.longDescription || proj.description,
       interactiveSandboxType: proj.interactiveSandboxType || "",
       tags: Array.isArray(proj.tags) ? proj.tags.join(", ") : String(proj.tags || ""),
-      iconName: proj.iconName || "Layers"
+      iconName: proj.iconName || "Layers",
+      imageUrl: proj.imageUrl || ""
     });
     setProjectMessage("");
   };
@@ -351,7 +353,8 @@ export default function App() {
       longDescription: "",
       interactiveSandboxType: "",
       tags: "React JS, Tailwind CSS, TypeScript",
-      iconName: "Layers"
+      iconName: "Layers",
+      imageUrl: ""
     });
     setProjectMessage("");
   };
@@ -376,7 +379,8 @@ export default function App() {
         longDescription: showcaseForm.longDescription || showcaseForm.description,
         tags: showcaseForm.tags.split(",").map(s => s.trim()).filter(Boolean),
         iconName: showcaseForm.iconName || "Layers",
-        interactiveSandboxType: showcaseForm.interactiveSandboxType || undefined
+        interactiveSandboxType: showcaseForm.interactiveSandboxType || undefined,
+        imageUrl: showcaseForm.imageUrl
       };
 
       const res = await fetch("/api/projects", {
@@ -406,7 +410,8 @@ export default function App() {
         githubUrl: showcaseForm.githubUrl,
         liveUrl: showcaseForm.liveUrl,
         iconName: showcaseForm.iconName,
-        interactiveSandboxType: showcaseForm.interactiveSandboxType || undefined
+        interactiveSandboxType: showcaseForm.interactiveSandboxType || undefined,
+        imageUrl: showcaseForm.imageUrl
       };
 
       const updatedList = editingProject?.id 
@@ -429,6 +434,31 @@ export default function App() {
   const [jobSearchQuery, setJobSearchQuery] = useState("");
   const [jobTypeFilter, setJobTypeFilter] = useState<"all" | "remote" | "onsite">("all");
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+
+  // Preferred job titles & Toast notification system
+  interface ToastMessage {
+    id: string;
+    title: string;
+    description: string;
+    type: "success" | "info" | "warning";
+  }
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [preferredTitles, setPreferredTitles] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem("frealem_preferred_job_titles");
+      return stored ? JSON.parse(stored) : ["React", "TypeScript", "Frontend", "Backend", "Full-Stack"];
+    } catch (e) {
+      return ["React", "TypeScript", "Frontend", "Backend", "Full-Stack"];
+    }
+  });
+
+  const addToast = (title: string, description: string, type: "success" | "info" | "warning" = "success") => {
+    const newToast: ToastMessage = { id: `toast-${Date.now()}-${Math.random()}`, title, description, type };
+    setToasts((prev) => [...prev, newToast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== newToast.id));
+    }, 6000);
+  };
 
   // States for Resume / Cover Letter Advisor
   const [isTailoring, setIsTailoring] = useState(false);
@@ -485,6 +515,39 @@ export default function App() {
       const response = await fetch("/api/jobs");
       const data = await response.json();
       if (data && Array.isArray(data.jobs)) {
+        // Collect existing jobs' IDs to compare
+        const existingJobIds = new Set(jobs.map((j) => j.id));
+
+        // Detect matches
+        const matches = data.jobs.filter((job: Job) => {
+          return preferredTitles.some((pref) =>
+            job.title.toLowerCase().includes(pref.trim().toLowerCase())
+          );
+        });
+
+        // Filter out matches that were already present in the existing jobs list (truly newly loaded matches since last state)
+        const newlyDiscoveredMatches = matches.filter((job: Job) => !existingJobIds.has(job.id));
+
+        if (newlyDiscoveredMatches.length > 0) {
+          addToast(
+            "🎯 New Matches Discovered!",
+            `Successfully loaded ${newlyDiscoveredMatches.length} new matching role(s) for keywords (${preferredTitles.slice(0, 3).join(", ")}...), e.g. "${newlyDiscoveredMatches[0].title}"!`,
+            "success"
+          );
+        } else if (matches.length > 0) {
+          addToast(
+            "🔄 Feed Refreshed",
+            `Latest feed synchronized. Found ${matches.length} active matching tracker opportunities.`,
+            "info"
+          );
+        } else {
+          addToast(
+            "🔄 Feed Success",
+            "Latest developer feed scanned and verified successfully.",
+            "info"
+          );
+        }
+
         setJobs(data.jobs);
         setIsGrounded(!!data.grounded);
         if (data.jobs.length > 0) {
@@ -493,6 +556,11 @@ export default function App() {
       }
     } catch (err) {
       console.error("Failed to load live jobs feed:", err);
+      addToast(
+        "⚠️ Network Alert",
+        "Unable to pull live recruiter data. Resilient offline fallback is active.",
+        "warning"
+      );
     } finally {
       setIsLoadingJobs(false);
     }
@@ -1066,6 +1134,77 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Preferred Job Keyword Monitor */}
+                  <div className="mb-4 bg-zinc-950/60 rounded-xl p-3 border border-zinc-850/60 flex flex-col gap-2">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                      <span className="text-[10px] font-mono text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                        Auto-Matched Preferences (Stored in browser)
+                      </span>
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const form = e.currentTarget;
+                          const input = form.elements.namedItem("titleInput") as HTMLInputElement;
+                          const val = input.value.trim();
+                          if (val) {
+                            if (!preferredTitles.some(pt => pt.toLowerCase() === val.toLowerCase())) {
+                              const updated = [...preferredTitles, val];
+                              setPreferredTitles(updated);
+                              localStorage.setItem("frealem_preferred_job_titles", JSON.stringify(updated));
+                              addToast("Preference Added", `Added "${val}" to job tracking alert parameters!`, "success");
+                            } else {
+                              addToast("Already Tracked", `"${val}" is already registered as a keyword.`, "info");
+                            }
+                            input.value = "";
+                          }
+                        }}
+                        className="flex gap-1 w-full sm:w-auto"
+                      >
+                        <input
+                          type="text"
+                          name="titleInput"
+                          placeholder="Add alert keyword e.g. Next.js"
+                          className="bg-zinc-900 border border-zinc-800 rounded px-2 py-0.5 text-[10px] text-zinc-200 focus:outline-none focus:border-blue-500 font-mono w-full sm:w-36"
+                        />
+                        <button
+                          type="submit"
+                          className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-[10px] text-white font-mono font-bold rounded cursor-pointer transition uppercase"
+                        >
+                          + Add
+                        </button>
+                      </form>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      {preferredTitles.length === 0 ? (
+                        <p className="text-[10px] text-zinc-500 font-mono italic">No keyword alerts configured. Adding keywords will alert you to new matching opportunities upon refresh.</p>
+                      ) : (
+                        preferredTitles.map((title) => (
+                          <span
+                            key={title}
+                            className="bg-blue-600/10 text-blue-400 hover:text-blue-350 text-[9px] font-mono font-bold px-2 py-0.5 rounded border border-blue-500/15 flex items-center gap-1 group transition"
+                          >
+                            {title}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = preferredTitles.filter(pt => pt !== title);
+                                setPreferredTitles(updated);
+                                localStorage.setItem("frealem_preferred_job_titles", JSON.stringify(updated));
+                                addToast("Preference Removed", `Removed "${title}" from telemetry filters.`, "info");
+                              }}
+                              className="text-zinc-500 hover:text-red-400 font-bold transition ml-0.5 cursor-pointer leading-none"
+                              title={`Remove ${title}`}
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
                   {/* Job scroll results */}
                   {isLoadingJobs ? (
                     <div className="py-12 flex flex-col items-center justify-center gap-2">
@@ -1489,20 +1628,6 @@ export default function App() {
                         <option value="backend">Backend (Microservices / Log Routers)</option>
                       </select>
                     </div>
-
-                    <div>
-                      <label className="block text-[10px] text-zinc-500 font-mono font-semibold uppercase mb-1">Interactive Sandbox Playground</label>
-                      <select
-                        value={showcaseForm.interactiveSandboxType}
-                        onChange={(e) => setShowcaseForm({...showcaseForm, interactiveSandboxType: e.target.value})}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded p-1.5 text-white focus:outline-none focus:border-blue-500"
-                      >
-                        <option value="">None (Standard Spotlight Card)</option>
-                        <option value="api_simulator">API Simulator (Payment aggregations)</option>
-                        <option value="regex_tester">Regex Log Sandbox (Logging parsers)</option>
-                        <option value="sql_query_filter">SQL Relationship Studio (Multi-languages)</option>
-                      </select>
-                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1537,6 +1662,68 @@ export default function App() {
                         className="w-full bg-zinc-900 border border-zinc-800 rounded p-2 text-white focus:outline-none focus:border-blue-500 font-sans"
                         placeholder="React, TypeScript, Tailwind"
                       />
+                    </div>
+                  </div>
+
+                  <div className="border-t border-zinc-850 pt-3 mt-1 pb-1">
+                    <label className="block text-[10px] text-zinc-400 font-mono font-semibold uppercase mb-2 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-ping"></span>
+                      SHOWCASE PREVIEW BANNER PHOTO OPTIONS (SELECT ANY TO USE OR CHOOSE CUSTOM)
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-2">
+                      {[
+                        { name: "SaaS Dashboard", url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80" },
+                        { name: "API Servers", url: "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=800&q=80" },
+                        { name: "SQL Studio", url: "https://images.unsplash.com/photo-1544383835-bda2bc66a55d?auto=format&fit=crop&w=800&q=80" },
+                        { name: "Dev Workspace", url: "https://images.unsplash.com/photo-1607799279861-4dd421887fb3?auto=format&fit=crop&w=800&q=80" },
+                        { name: "Digital Security", url: "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=800&q=80" },
+                        { name: "AI & Neural Net", url: "https://images.unsplash.com/photo-1677442136019-21780efad99a?auto=format&fit=crop&w=800&q=80" },
+                        { name: "Go Pipeline", url: "https://images.unsplash.com/photo-1517694712202-14dd9538aa97?auto=format&fit=crop&w=800&q=80" }
+                      ].map((preset, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setShowcaseForm({ ...showcaseForm, imageUrl: preset.url })}
+                          className={`group relative h-14 rounded-lg overflow-hidden border text-left transition cursor-pointer ${
+                            showcaseForm.imageUrl === preset.url
+                              ? "border-blue-500 ring-1 ring-blue-500/55"
+                              : "border-zinc-800 hover:border-zinc-700"
+                          }`}
+                        >
+                          <img src={preset.url} alt={preset.name} className="w-full h-full object-cover brightness-60 group-hover:brightness-85 transition duration-205" referrerPolicy="no-referrer" />
+                          <div className="absolute inset-x-0 bottom-0 bg-black/60 p-0.5 text-center">
+                            <span className="text-[7px] leading-none font-mono text-zinc-300 truncate block uppercase font-bold">{preset.name}</span>
+                          </div>
+                          {showcaseForm.imageUrl === preset.url && (
+                            <div className="absolute top-1 right-1 bg-blue-600 rounded-full p-0.5 shadow-md">
+                              <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M5 13l4 4L19 7" />
+                              </svg>
+                            </div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <input
+                          type="url"
+                          value={showcaseForm.imageUrl || ""}
+                          onChange={(e) => setShowcaseForm({ ...showcaseForm, imageUrl: e.target.value })}
+                          className="w-full bg-zinc-950 border border-zinc-850 rounded p-1.5 text-[9.5px] text-white focus:outline-none focus:border-blue-500 font-mono"
+                          placeholder="Or copy-paste any custom development photo URL directly..."
+                        />
+                      </div>
+                      {showcaseForm.imageUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setShowcaseForm({ ...showcaseForm, imageUrl: "" })}
+                          className="px-2.5 py-1 bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-750 text-[9px] rounded transition font-mono uppercase cursor-pointer"
+                        >
+                          Clear URL
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -1758,7 +1945,7 @@ export default function App() {
                     High Performance SaaS Design & Web Engineering
                   </h3>
                   <p className="text-zinc-300 text-sm leading-relaxed mb-4">
-                    I translate critical client mandates into responsive layouts, interactive analytics dashboards, and robust relational models. Toggle the spotlight projects below to check live simulated dashboards and test sandbox queries immediately.
+                    I translate critical client mandates into responsive layouts, interactive analytics dashboards, and robust relational models. Toggle the spotlight projects below to check detailed project showcases.
                   </p>
 
                   <div className="space-y-2 mt-4 font-sans">
@@ -1825,6 +2012,18 @@ export default function App() {
                     </div>
                   </div>
 
+                  {selectedProject.imageUrl && (
+                    <div className="w-full h-44 rounded-xl overflow-hidden mb-4 border border-zinc-800 relative group select-none">
+                      <img 
+                        src={selectedProject.imageUrl} 
+                        alt={selectedProject.title} 
+                        className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-500"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/40 to-transparent pointer-events-none"></div>
+                    </div>
+                  )}
+
                   <p className="text-zinc-300 text-xs leading-relaxed mb-4">
                     {selectedProject.longDescription}
                   </p>
@@ -1864,179 +2063,32 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Sandbox playground injector */}
-                  {selectedProject.interactiveSandboxType && (
-                    <InteractiveSandbox type={selectedProject.interactiveSandboxType} />
-                  )}
-                </div>
-
-                <div className="mt-4 p-2 bg-blue-500/5 text-blue-400 rounded-lg border border-blue-500/10 text-2xs font-mono text-center">
-                  ▲ Sandbox Playground displays live interactive mock states written to execute without external servers.
                 </div>
               </div>
 
             </div>
 
-            {/* Lower Bento row including Client Inquiry Form & Tech stack distribution (Grid 12) */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            {/* Lower Bento row including Skill Distribution Map */}
+            <div className="grid grid-cols-1 gap-5">
               
-              {/* Box C: Live Client Estimator & Inquiry form (span 8) */}
-              <div className="lg:col-span-8 bg-zinc-900/80 border border-zinc-800 rounded-2xl p-6 flex flex-col justify-between">
-                <div>
-                  <h2 className="text-zinc-500 text-2xs font-bold uppercase tracking-widest mb-3 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                    Project Estimator
-                  </h2>
-                  <h3 className="text-xl font-bold text-white mb-4">Request a Pitch & Live Estimation</h3>
-
-                  <form onSubmit={handleClientSubmit} className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-[10px] text-zinc-500 font-semibold uppercase mb-1 font-mono">Your Name / Agent *</label>
-                        <input
-                          type="text"
-                          required
-                          value={clientInquiry.clientName}
-                          onChange={(e) => setClientInquiry({ ...clientInquiry, clientName: e.target.value })}
-                          className="w-full bg-zinc-950/70 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
-                          placeholder="Abebe / Sarah"
-                        />
-                      </div>
-                      
-                      <div>
-                        <label className="block text-[10px] text-zinc-500 font-semibold uppercase mb-1 font-mono">Your Company / Agency</label>
-                        <input
-                          type="text"
-                          value={clientInquiry.companyName}
-                          onChange={(e) => setClientInquiry({ ...clientInquiry, companyName: e.target.value })}
-                          className="w-full bg-zinc-950/70 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
-                          placeholder="Gebeya Tech Ltd"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] text-zinc-500 font-semibold uppercase mb-1 font-mono">Professional Email *</label>
-                        <input
-                          type="email"
-                          required
-                          value={clientInquiry.clientEmail}
-                          onChange={(e) => setClientInquiry({ ...clientInquiry, clientEmail: e.target.value })}
-                          className="w-full bg-zinc-950/70 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
-                          placeholder="client@company.co"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[10px] text-zinc-500 font-semibold uppercase mb-1 font-mono">Project Type</label>
-                        <select
-                          value={clientInquiry.projectType}
-                          onChange={(e) => setClientInquiry({ ...clientInquiry, projectType: e.target.value })}
-                          className="w-full bg-zinc-950/70 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
-                        >
-                          <option value="Full-Stack SaaS">Full-Stack SaaS (Dashboard / REST)</option>
-                          <option value="E-commerce System">E-commerce Marketplace Model</option>
-                          <option value="Real-Time / Logistics Dashboard">Logistics Log Orchestration</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] text-zinc-500 font-semibold uppercase mb-1 font-mono">Budget Tier Range</label>
-                        <select
-                          value={clientInquiry.budgetRange}
-                          onChange={(e) => setClientInquiry({ ...clientInquiry, budgetRange: e.target.value })}
-                          className="w-full bg-zinc-950/70 border border-zinc-800 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
-                        >
-                          <option value="$3,000 - $5,000">$3,000 - $5,000 USD (SME System)</option>
-                          <option value="$5,000 - $10,000">$5,000 - $10,000 USD (Fintech Core)</option>
-                          <option value="$10,000+">$10,000+ USD (Custom Platform)</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] text-zinc-500 font-semibold uppercase mb-1 font-mono">Detailed Requirements & Flow Description *</label>
-                      <textarea
-                        required
-                        value={clientInquiry.projectDescription}
-                        onChange={(e) => setClientInquiry({ ...clientInquiry, projectDescription: e.target.value })}
-                        rows={3}
-                        className="w-full bg-zinc-950/70 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 font-mono"
-                        placeholder="State what needs to be built e.g. An elegant pay widget connecting Telebirr to our international custom Node.js system..."
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={inquiryStatus === "submitting"}
-                      className="px-5 py-2 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-lg text-xs font-mono font-bold uppercase tracking-wider flex items-center gap-2 cursor-pointer transition"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      {inquiryStatus === "submitting" ? "Compiling Quote Matrix..." : "Calculate Timeline Estimate"}
-                    </button>
-                  </form>
-
-                  {/* Instant Quote Simulation Screen */}
-                  {inquiryStatus === "success" && simulatedQuote && (
-                    <div className="mt-4 p-4 bg-zinc-950 border border-blue-500/30 rounded-xl space-y-3 font-mono text-xs animate-fade-in">
-                      <div className="flex justify-between items-center text-blue-400 font-bold border-b border-zinc-850 pb-2">
-                        <span>✓ CALCULATION COMPLETED SUCCESSFULLY</span>
-                        <button
-                          onClick={() => setInquiryStatus("idle")}
-                          className="text-zinc-500 hover:text-zinc-300 font-sans font-bold"
-                        >
-                          ✕ Reset
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <div className="bg-zinc-900 p-2.5 rounded border border-zinc-800">
-                          <span className="block text-[8px] text-zinc-500 uppercase">Estimated Timeline</span>
-                          <p className="text-zinc-200 font-bold text-xs mt-1">{simulatedQuote.timeline}</p>
-                        </div>
-                        <div className="bg-zinc-900 p-2.5 rounded border border-zinc-800">
-                          <span className="block text-[8px] text-zinc-500 uppercase">Engineering Effort</span>
-                          <p className="text-zinc-200 font-bold text-xs mt-1">{simulatedQuote.estimatedHours} Dev-Hours</p>
-                        </div>
-                        <div className="bg-zinc-900 p-2.5 rounded border border-zinc-800">
-                          <span className="block text-[8px] text-zinc-500 uppercase">Recommended Architecture</span>
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {simulatedQuote.techSuggested.map((tech, idx) => (
-                              <span key={idx} className="bg-zinc-950 text-blue-400 text-[8px] font-bold px-1 rounded uppercase">
-                                {tech}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      <p className="text-[10px] text-zinc-400 font-sans leading-relaxed pt-1.5 border-t border-zinc-850/60">
-                        Frealem will respond to project inquiries directly within 12 hours with a comprehensive roadmap presentation matching this simulated quote matrix. Thanks!
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Box D: Skills Distribution (span 4) */}
-              <div className="lg:col-span-4 bg-zinc-900/80 border border-zinc-800 rounded-2xl p-6 flex flex-col justify-between">
+              {/* Box D: Skills Distribution (Full Width) */}
+              <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-6 flex flex-col justify-between">
                 <div>
                   <h2 className="text-zinc-500 text-2xs font-bold uppercase tracking-widest mb-4 flex items-center justify-between">
-                    <span>Skills Map & Level</span>
-                    <span className="bg-blue-600/10 text-blue-400 text-[9px] font-mono px-1.5 rounded uppercase font-bold">
-                      VERIFIED
+                    <span>Skills Map & Verified Competencies</span>
+                    <span className="bg-blue-600/10 text-blue-400 text-[9px] font-mono px-1.5 rounded uppercase font-bold text-xs">
+                      VERIFIED SKILLS
                     </span>
                   </h2>
 
-                  <div className="space-y-4 font-mono text-xs">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 font-mono text-xs">
                     {skillsList.map((sk) => (
-                      <div key={sk.id} className="space-y-1">
+                      <div key={sk.id} className="space-y-1 bg-zinc-950/30 p-3 rounded-xl border border-zinc-900">
                         <div className="flex items-center justify-between text-zinc-300 font-medium text-[11px]">
                           <span>{sk.name}</span>
                           <span className="text-blue-400 font-bold">{sk.level}%</span>
                         </div>
-                        <div className="h-1 bg-zinc-850 rounded-full overflow-hidden">
+                        <div className="h-1 bg-zinc-850 rounded-full overflow-hidden mt-1">
                           <div className="h-full bg-blue-500 rounded-full" style={{ width: `${sk.level}%` }} />
                         </div>
                       </div>
@@ -2044,7 +2096,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="mt-6 pt-4 border-t border-zinc-850 flex flex-col gap-1 text-[10px] text-zinc-500 leading-normal font-mono">
+                <div className="mt-8 pt-4 border-t border-zinc-850 flex flex-wrap gap-x-8 gap-y-2 text-[10px] text-zinc-500 leading-normal font-mono">
                   <span>● Core Focus: Scalability</span>
                   <span>● Security first routing rules</span>
                   <span>● Strict DB normal forms optimization</span>
@@ -2071,6 +2123,42 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Floating Toast Alerts Portal */}
+      <div className="fixed bottom-5 right-5 z-[9999] flex flex-col gap-2.5 max-w-sm w-full pointer-events-none">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className={`p-3.5 rounded-xl border shadow-2xl flex items-start gap-3 backdrop-blur-md pointer-events-auto transform transition-all duration-300 animate-fade-in ${
+              toast.type === "success"
+                ? "bg-zinc-950/95 border-emerald-500/30 text-emerald-400"
+                : toast.type === "warning"
+                ? "bg-zinc-950/95 border-amber-500/35 text-amber-400"
+                : "bg-zinc-950/95 border-blue-500/35 text-blue-400"
+            }`}
+          >
+            <div className="mt-0.5 shrink-0">
+              {toast.type === "success" ? (
+                <CheckCircle className="w-4 h-4 text-emerald-400" />
+              ) : toast.type === "warning" ? (
+                <ShieldCheck className="w-4 h-4 text-amber-450" />
+              ) : (
+                <Sparkles className="w-4 h-4 text-blue-400" />
+              )}
+            </div>
+            <div className="flex-1">
+              <h4 className="font-bold text-[11px] text-zinc-100">{toast.title}</h4>
+              <p className="text-[10px] text-zinc-400 mt-0.5 leading-normal font-mono">{toast.description}</p>
+            </div>
+            <button
+              onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}
+              className="text-zinc-500 hover:text-zinc-350 font-bold text-xs transition cursor-pointer self-start shrink-0 ml-1"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

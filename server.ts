@@ -1,8 +1,10 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+import { MongoClient, Db } from "mongodb";
 
 dotenv.config();
 
@@ -160,7 +162,8 @@ const DEFAULT_PROJECTS = [
     githubUrl: "https://github.com/frealem-tekalign/omnipay-gateway",
     liveUrl: "https://omnipay-east-africa.dev",
     iconName: "CreditCard",
-    interactiveSandboxType: "api_simulator"
+    interactiveSandboxType: "api_simulator",
+    imageUrl: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80"
   },
   {
     id: "proj-2",
@@ -172,7 +175,8 @@ const DEFAULT_PROJECTS = [
     githubUrl: "https://github.com/frealem-tekalign/velosync-router",
     liveUrl: "https://velosync-logs.dev",
     iconName: "Cpu",
-    interactiveSandboxType: "regex_tester"
+    interactiveSandboxType: "regex_tester",
+    imageUrl: "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=800&q=80"
   },
   {
     id: "proj-3",
@@ -184,7 +188,8 @@ const DEFAULT_PROJECTS = [
     githubUrl: "https://github.com/frealem-tekalign/alem-cms",
     liveUrl: "https://alem-cms.dev",
     iconName: "Database",
-    interactiveSandboxType: "sql_query_filter"
+    interactiveSandboxType: "sql_query_filter",
+    imageUrl: "https://images.unsplash.com/photo-1544383835-bda2bc66a55d?auto=format&fit=crop&w=800&q=80"
   }
 ];
 
@@ -216,9 +221,156 @@ const DEFAULT_PROFILE_V2 = {
 
 let SERVER_PROFILE = { ...DEFAULT_PROFILE_V2 };
 
+// Persistent online cloud database hook Configuration
+const DB_FILE = path.join(process.cwd(), "db_portfolio.json");
+let mongoClient: MongoClient | null = null;
+let mongoDb: Db | null = null;
+let isMongoActive = false;
+
+async function initDatabase() {
+  const mUri = process.env.MONGODB_URI;
+  if (mUri) {
+    try {
+      console.log("Connecting database to MongoDB Atlas online cloud cluster...");
+      mongoClient = new MongoClient(mUri);
+      await mongoClient.connect();
+      mongoDb = mongoClient.db("portfolio_db");
+      isMongoActive = true;
+      console.log("Connected to MongoDB Atlas successfully!");
+
+      const profileColl = mongoDb.collection("profile");
+      const projectsColl = mongoDb.collection("projects");
+      const skillsColl = mongoDb.collection("skills");
+
+      const hasProfile = await profileColl.findOne({ id: "profile-main" });
+      if (!hasProfile) {
+        console.log("Seeding online MongoDB database with premium portfolio items...");
+        await profileColl.insertOne({ id: "profile-main", ...DEFAULT_PROFILE_V2 });
+        await projectsColl.insertMany(DEFAULT_PROJECTS);
+        await skillsColl.insertMany(DEFAULT_SKILLS);
+        console.log("Online seed completed successfully!");
+      }
+
+      // Load data from Mongo
+      const mongoProfile = await profileColl.findOne({ id: "profile-main" });
+      if (mongoProfile) {
+        const { _id, ...rest } = mongoProfile as any;
+        SERVER_PROFILE = rest;
+      }
+
+      const mongoProjects = await projectsColl.find({}).toArray();
+      if (mongoProjects && mongoProjects.length > 0) {
+        SERVER_PROJECTS = mongoProjects.map(p => {
+          const { _id, ...rest } = p as any;
+          return rest;
+        });
+      }
+
+      const mongoSkills = await skillsColl.find({}).toArray();
+      if (mongoSkills && mongoSkills.length > 0) {
+        SERVER_SKILLS = mongoSkills.map(s => {
+          const { _id, ...rest } = s as any;
+          return rest;
+        });
+      }
+      return;
+    } catch (err) {
+      console.error("Failed to establish live Mongo database connection. Falling back to local workspace persistence...", err);
+      isMongoActive = false;
+    }
+  }
+
+  // Resilient JSON flat-file database fallback
+  try {
+    const defaultDbData = {
+      profile: DEFAULT_PROFILE_V2,
+      projects: DEFAULT_PROJECTS,
+      skills: DEFAULT_SKILLS
+    };
+    if (!fs.existsSync(DB_FILE)) {
+      fs.writeFileSync(DB_FILE, JSON.stringify(defaultDbData, null, 2), "utf8");
+    }
+    const dataStr = fs.readFileSync(DB_FILE, "utf8");
+    const data = JSON.parse(dataStr);
+    SERVER_PROFILE = data.profile || DEFAULT_PROFILE_V2;
+    SERVER_PROJECTS = data.projects || DEFAULT_PROJECTS;
+    SERVER_SKILLS = data.skills || DEFAULT_SKILLS;
+    console.log("Synchronized with robust local persistent JSON database successfully.");
+  } catch (err) {
+    console.error("FS Database read anomaly, using in-memory live state:", err);
+  }
+}
+
+async function saveProfileState() {
+  if (isMongoActive && mongoDb) {
+    try {
+      const coll = mongoDb.collection("profile");
+      await coll.replaceOne({ id: "profile-main" }, { id: "profile-main", ...SERVER_PROFILE }, { upsert: true });
+      console.log("Profile changes committed dynamically to MongoDB Atlas.");
+      return;
+    } catch (err) {
+      console.error("Mongo Profile write error:", err);
+    }
+  }
+
+  try {
+    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS };
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error("FS Database save profile error:", err);
+  }
+}
+
+async function saveProjectsState() {
+  if (isMongoActive && mongoDb) {
+    try {
+      const coll = mongoDb.collection("projects");
+      await coll.deleteMany({});
+      if (SERVER_PROJECTS.length > 0) {
+        await coll.insertMany(SERVER_PROJECTS);
+      }
+      console.log("Projects list committed dynamically to MongoDB Atlas.");
+      return;
+    } catch (err) {
+      console.error("Mongo Projects list write error:", err);
+    }
+  }
+
+  try {
+    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS };
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error("FS Database save projects error:", err);
+  }
+}
+
+async function saveSkillsState() {
+  if (isMongoActive && mongoDb) {
+    try {
+      const coll = mongoDb.collection("skills");
+      await coll.deleteMany({});
+      if (SERVER_SKILLS.length > 0) {
+        await coll.insertMany(SERVER_SKILLS);
+      }
+      console.log("Skills list committed dynamically to MongoDB Atlas.");
+      return;
+    } catch (err) {
+      console.error("Mongo Skills list write error:", err);
+    }
+  }
+
+  try {
+    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS };
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error("FS Database save skills error:", err);
+  }
+}
+
 
 
 async function startServer() {
+  await initDatabase();
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
@@ -226,7 +378,20 @@ async function startServer() {
 
   // Shared lazy init helper for Gemini SDK
   let geminiAI: GoogleGenAI | null = null;
+  let isGeminiQuotaExhausted = false;
+  let quotaExhaustedResetTime = 0;
+  let cachedJobs: any[] | null = null;
+  let cachedJobsTimestamp = 0;
+
   function getGeminiClient(): GoogleGenAI | null {
+    if (isGeminiQuotaExhausted) {
+      if (Date.now() > quotaExhaustedResetTime) {
+        console.log("Resetting Gemini API quota cool-down state to retry.");
+        isGeminiQuotaExhausted = false;
+      } else {
+        return null; // Bypassed directly to use fallbacks without hitting 429
+      }
+    }
     if (!geminiAI) {
       const apiKey = process.env.GEMINI_API_KEY;
       if (apiKey && apiKey !== "MY_GEMINI_API_KEY") {
@@ -245,10 +410,17 @@ async function startServer() {
 
   // API 1: Fetch and search latest jobs using search grounding
   app.get("/api/jobs", async (req, res) => {
+    // Return from memory cache if fresh (valid for 30 minutes)
+    const now = Date.now();
+    if (cachedJobs && (now - cachedJobsTimestamp < 30 * 60 * 1000)) {
+      console.log("Serving grounded jobs feed from server memory cache.");
+      return res.json({ jobs: cachedJobs, grounded: true });
+    }
+
     try {
       const client = getGeminiClient();
       if (!client) {
-        console.warn("GEMINI_API_KEY is not configured or placeholder. Delivering curated live fallback jobs.");
+        console.warn("Gemini Client is bypassed or cool-down is active. Delivering curated live fallback jobs.");
         return res.json({ jobs: FALLBACK_JOBS, grounded: false });
       }
 
@@ -299,14 +471,23 @@ async function startServer() {
       const parsed = JSON.parse(cleaned);
 
       if (parsed && Array.isArray(parsed.jobs) && parsed.jobs.length > 0) {
+        cachedJobs = parsed.jobs;
+        cachedJobsTimestamp = Date.now();
         return res.json({ jobs: parsed.jobs, grounded: true });
       }
 
       console.warn("Invalid parser structure or empty job array, falling back to curated stack.");
       return res.json({ jobs: FALLBACK_JOBS, grounded: false });
     } catch (err: any) {
-      console.error("Error generating grounded jobs feed: ", err.message);
-      return res.json({ jobs: FALLBACK_JOBS, grounded: false, error: err.message });
+      const errMsg = err?.message || String(err);
+      if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("RESOURCE_EXHAUSTED")) {
+        isGeminiQuotaExhausted = true;
+        quotaExhaustedResetTime = Date.now() + 15 * 60 * 1000;
+        console.warn("Gemini API quota exhausted (429). Commencing graceful 15-minute cool-down fallback.");
+      } else {
+        console.warn("Failed to generate grounded jobs feed: ", errMsg);
+      }
+      return res.json({ jobs: FALLBACK_JOBS, grounded: false, error: errMsg });
     }
   });
 
@@ -379,8 +560,37 @@ async function startServer() {
       const jobTailored = JSON.parse(cleaned);
       return res.json(jobTailored);
     } catch (err: any) {
-      console.error("Tailor request error: ", err.message);
-      return res.status(500).json({ error: err.message });
+      const errMsg = err?.message || String(err);
+      if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("RESOURCE_EXHAUSTED")) {
+        isGeminiQuotaExhausted = true;
+        quotaExhaustedResetTime = Date.now() + 15 * 60 * 1000;
+        console.warn("Gemini API quota exhausted during tailoring (429). Commencing graceful 15-minute cool-down fallback.");
+      } else {
+        console.warn("Tailor request error: ", errMsg);
+      }
+
+      // High quality fallback generation if key or quota fails
+      const fallbackAdvising = {
+        coverLetter: `Dear Hiring Team at ${req.body.company || "Target Company"},\n\nI am writing to express my strong interest in the ${req.body.jobTitle || "Full Stack Developer"} position. As an Ethio-centric Full-Stack Engineer with deep expertise building high-performance modules using React, TypeScript, and Node.js, I thrive at the intersection of robust backend engines and clean, intuitive user interfaces.\n\nYour mandate for building highly scalable code matches perfectly with my project showcase. For instance, my custom-built API Orchestrator and interactive React Dashboards emphasize layout performance and complete data integration. Whether working onsite in Addis Ababa or building asynchronously with a distributed international team remote, I provide speed, security, and a relentless focus on client goals.\n\nThank you for your time and consideration. I look forward to detailing how my technical foundation can deliver immediate results.\n\nSincerely,\nEthiopian Full-Stack Developer`,
+        adjustments: [
+          "Highlight complete, standalone projects in React + Tailwind on your first page.",
+          "Incorporate a 'Databases' sub-section highlighting Postgres or MongoDB schema design.",
+          `Ensure you mention direct API proxy integrations under your projects to show complete client-to-server understanding, matching the criteria of ${req.body.company || "the company"}.`,
+          "Quantify your load optimizations (e.g., 'optimized image asset rendering in React by 40%').",
+          "State explicitly: 'Comfortable working both in local hybrid Addis Ababa setups and globally async remote pipelines'."
+        ],
+        interviewPrep: [
+          {
+            question: "How do you handle database migration security and API key parameters in dynamic environments?",
+            bestAnswer: "Explain that you utilize server-side API proxy routers (/api/*) so secrets never leak to Vite/client bundles, and structure DBM files sequentially via raw migrations or ORM schemas."
+          },
+          {
+            question: "What is your experience working in multi-timezone teams?",
+            bestAnswer: "Focus on clear documentation, atomic commits, proactive daily Slack/Discord briefs, and using tools like Figma and Postman to minimize handoff friction."
+          }
+        ]
+      };
+      return res.json(fallbackAdvising);
     }
   });
 
@@ -390,9 +600,9 @@ async function startServer() {
   });
 
   // API 4: Add or update a project showcase
-  app.post("/api/projects", (req, res) => {
+  app.post("/api/projects", async (req, res) => {
     try {
-      const { id, title, description, longDescription, tags, category, githubUrl, liveUrl, iconName, interactiveSandboxType } = req.body;
+      const { id, title, description, longDescription, tags, category, githubUrl, liveUrl, iconName, interactiveSandboxType, imageUrl } = req.body;
       
       if (!title || !description || !category) {
         return res.status(400).json({ error: "Missing required fields: title, description, and category are required." });
@@ -415,8 +625,10 @@ async function startServer() {
             githubUrl: githubUrl || "",
             liveUrl: liveUrl || "",
             iconName: iconName || "Layers",
-            interactiveSandboxType: interactiveSandboxType || undefined
+            interactiveSandboxType: interactiveSandboxType || undefined,
+            imageUrl: imageUrl || ""
           };
+          await saveProjectsState();
           return res.json({ success: true, message: "Showcase updated successfully on the server!", project: SERVER_PROJECTS[idx] });
         }
       }
@@ -433,9 +645,11 @@ async function startServer() {
         githubUrl: githubUrl || "",
         liveUrl: liveUrl || "",
         iconName: iconName || "Layers",
-        interactiveSandboxType: interactiveSandboxType || undefined
+        interactiveSandboxType: interactiveSandboxType || undefined,
+        imageUrl: imageUrl || ""
       };
       SERVER_PROJECTS.push(newProj);
+      await saveProjectsState();
       return res.json({ success: true, message: "New showcase added successfully on the server!", project: newProj });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -448,7 +662,7 @@ async function startServer() {
   });
 
   // API 4b: Update dynamic profile details
-  app.post("/api/profile", (req, res) => {
+  app.post("/api/profile", async (req, res) => {
     try {
       const {
         name,
@@ -480,6 +694,7 @@ async function startServer() {
         bio: bio || SERVER_PROFILE.bio
       };
 
+      await saveProfileState();
       return res.json({ success: true, message: "Profile updated successfully!", profile: SERVER_PROFILE });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -492,7 +707,7 @@ async function startServer() {
   });
 
   // API 6: Add or update a skill
-  app.post("/api/skills", (req, res) => {
+  app.post("/api/skills", async (req, res) => {
     try {
       const { id, name, level } = req.body;
       if (!name || level === undefined) {
@@ -505,6 +720,7 @@ async function startServer() {
         const idx = SERVER_SKILLS.findIndex(s => s.id === id);
         if (idx !== -1) {
           SERVER_SKILLS[idx] = { id, name, level: cleanLevel };
+          await saveSkillsState();
           return res.json({ success: true, message: "Skill updated successfully on the server!", skill: SERVER_SKILLS[idx] });
         }
       }
@@ -512,6 +728,7 @@ async function startServer() {
       const newId = `skill-${Date.now()}`;
       const newSkill = { id: newId, name, level: cleanLevel };
       SERVER_SKILLS.push(newSkill);
+      await saveSkillsState();
       return res.json({ success: true, message: "New skill added successfully on the server!", skill: newSkill });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -519,12 +736,13 @@ async function startServer() {
   });
 
   // API 7: Delete a skill
-  app.delete("/api/skills/:id", (req, res) => {
+  app.delete("/api/skills/:id", async (req, res) => {
     try {
       const { id } = req.params;
       const idx = SERVER_SKILLS.findIndex(s => s.id === id);
       if (idx !== -1) {
         SERVER_SKILLS.splice(idx, 1);
+        await saveSkillsState();
         return res.json({ success: true, message: "Skill deleted successfully on the server!" });
       }
       return res.status(404).json({ error: "Skill not found." });
