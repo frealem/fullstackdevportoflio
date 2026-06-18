@@ -29,11 +29,60 @@ import {
   X,
   Plus,
   Trash2,
-  Edit2
+  Edit2,
+  Globe,
+  Cpu
 } from "lucide-react";
 import { DEFAULT_PROFILE, PROJECTS } from "./profileData";
-import { Job, AppliedJob, ClientInquiry, Skill } from "./types";
+import { Job, AppliedJob, ClientInquiry, Skill, Service } from "./types";
 import InteractiveSandbox from "./components/InteractiveSandboxes";
+
+// Fallback services catalog when offline
+const SERVICES_FALLBACK: Service[] = [
+  {
+    id: "serv-1",
+    title: "Full-Stack SaaS Product Design & Engineering",
+    description: "End-to-end development of custom software products featuring beautiful responsive dashboards, real-time analytics, and high-security API routes.",
+    deliveryTime: "3 - 5 Weeks",
+    features: [
+      "Custom React & Vite Frontends",
+      "Robust Node.js Express or FastAPI backend API controllers",
+      "Database schema creation & optimization (Postgres/Mongo)",
+      "Interactive analytics charts utilizing Recharts & D3",
+      "Complete user authentication, security routing & JWT protocols"
+    ],
+    iconName: "Globe"
+  },
+  {
+    id: "serv-2",
+    title: "High-Speed Microservice Backend & API Integration",
+    description: "Low-latency microservices, security reverse proxies, rate limiters, and custom asynchronous queue controllers optimized for heavy loads.",
+    deliveryTime: "2 - 3 Weeks",
+    features: [
+      "Optimized Python FastAPI, Go, or Express.js services",
+      "Asynchronous webhook queues & background transaction worker threads",
+      "Redis caching & rate limiting middleware architecture",
+      "Secure API proxy setups shield third-party system secrets",
+      "Detailed telemetry tracking & custom system regex log parsers"
+    ],
+    iconName: "Cpu"
+  },
+  {
+    id: "serv-3",
+    title: "Interactive Admin Panels & Intelligent AI Grounding",
+    description: "Sophisticated developer dashboards connected to online databases, with custom prompt tuning or Gemini Search Grounding features.",
+    deliveryTime: "2 - 4 Weeks",
+    features: [
+      "Pristine Tailwind bento-grid administrative layouts",
+      "Gemini SDK custom prompt integration & strict JSON formatting",
+      "Full CRUD databases panels for portfolio, metrics, or content management",
+      "CSV & logs import/export utilities for bulk operations",
+      "Automated PDF or template generators (Cover Letters/Invoices/Brochures)"
+    ],
+    iconName: "Layers"
+  }
+];
+
 import {
   AreaChart,
   Area,
@@ -148,6 +197,46 @@ export default function App() {
       setSkillsLoading(false);
     }
   };
+
+  // Services State and Lifecycle Operations
+  const [servicesList, setServicesList] = useState<Service[]>(SERVICES_FALLBACK);
+  const [servicesLoading, setServicesLoading] = useState(false);
+  const [editingService, setEditingService] = useState<Service | null>(null);
+  const [isAddingNewService, setIsAddingNewService] = useState(false);
+  const [serviceForm, setServiceForm] = useState({
+    title: "",
+    description: "",
+    deliveryTime: "",
+    features: "",
+    iconName: "Globe"
+  });
+  const [isSavingService, setIsSavingService] = useState(false);
+  const [serviceError, setServiceError] = useState("");
+
+  const fetchDynamicServices = async () => {
+    setServicesLoading(true);
+    try {
+      const response = await fetch("/api/services");
+      const data = await response.json();
+      if (data && Array.isArray(data.services)) {
+        setServicesList(data.services);
+        localStorage.setItem("frealem_services_list", JSON.stringify(data.services));
+      }
+    } catch (err) {
+      console.error("Failed to fetch services from server:", err);
+      const local = localStorage.getItem("frealem_services_list");
+      if (local) {
+        try {
+          setServicesList(JSON.parse(local));
+        } catch (_) {}
+      } else {
+        setServicesList(SERVICES_FALLBACK);
+      }
+    } finally {
+      setServicesLoading(false);
+    }
+  };
+
 
   // Dynamic editable profile data representing professional candidate details
   const [profile, setProfile] = useState<any>({
@@ -304,10 +393,107 @@ export default function App() {
     }
   };
 
+  const handleSaveService = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!serviceForm.title.trim() || !serviceForm.description.trim() || !serviceForm.deliveryTime.trim()) {
+      setServiceError("Please fill out all required fields.");
+      return;
+    }
+    setIsSavingService(true);
+    setServiceError("");
+    try {
+      const cleanFeatures = serviceForm.features
+        .split("\n")
+        .map(f => f.trim())
+        .filter(Boolean);
+
+      const payload = {
+        id: editingService?.id || undefined,
+        title: serviceForm.title,
+        description: serviceForm.description,
+        deliveryTime: serviceForm.deliveryTime,
+        features: cleanFeatures,
+        iconName: serviceForm.iconName
+      };
+
+      const response = await fetch("/api/services", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (data.success) {
+        addToast(
+          editingService ? "Service Updated" : "Service Created",
+          `Successfully saved "${serviceForm.title}" package configuration!`,
+          "success"
+        );
+        setEditingService(null);
+        setIsAddingNewService(false);
+        setServiceForm({ title: "", description: "", deliveryTime: "", features: "", iconName: "Globe" });
+        await fetchDynamicServices();
+      } else {
+        setServiceError(data.error || "Failed to save service package.");
+      }
+    } catch (err) {
+      console.warn("Saving service offline fallback active:", err);
+      const cleanFeatures = serviceForm.features
+        .split("\n")
+        .map(f => f.trim())
+        .filter(Boolean);
+
+      const fallbackService: Service = {
+        id: editingService?.id || `fallback-serv-${Date.now()}`,
+        title: serviceForm.title,
+        description: serviceForm.description,
+        deliveryTime: serviceForm.deliveryTime,
+        features: cleanFeatures,
+        iconName: serviceForm.iconName
+      };
+      
+      let updatedList: Service[];
+      if (editingService?.id) {
+        updatedList = servicesList.map(s => s.id === editingService.id ? fallbackService : s);
+      } else {
+        updatedList = [...servicesList, fallbackService];
+      }
+      setServicesList(updatedList);
+      localStorage.setItem("frealem_services_list", JSON.stringify(updatedList));
+      addToast("Offline Sync Success", `Successfully saved "${serviceForm.title}" to local client cache.`, "info");
+      setEditingService(null);
+      setIsAddingNewService(false);
+      setServiceForm({ title: "", description: "", deliveryTime: "", features: "", iconName: "Globe" });
+    } finally {
+      setIsSavingService(false);
+    }
+  };
+
+  const handleDeleteService = async (id: string) => {
+    if (!window.confirm("Are you sure you want to delete this service package?")) return;
+    try {
+      const response = await fetch(`/api/services/${id}`, { method: "DELETE" });
+      const data = await response.json();
+      if (data.success) {
+        addToast("Service Removed", "The professional service option has been deleted from the database.", "info");
+        await fetchDynamicServices();
+      } else {
+        alert(data.error || "Failed to delete service.");
+      }
+    } catch (err) {
+      console.warn("Deleting service offline fallback active:", err);
+      const updated = servicesList.filter(s => s.id !== id);
+      setServicesList(updated);
+      localStorage.setItem("frealem_services_list", JSON.stringify(updated));
+      addToast("Removed Local Package", "Package deleted from local cache successfully.", "info");
+    }
+  };
+
+
   useEffect(() => {
     fetchDynamicProjects();
     fetchDynamicSkills();
     fetchDynamicProfile();
+    fetchDynamicServices();
   }, []);
 
   // Sync selectedProject when projects list changes
@@ -1924,6 +2110,229 @@ export default function App() {
               </div>
             </div>
 
+            {/* SERVICES MANAGEMENT & CONSULTATION PACKAGES WORKSPACE CARD */}
+            <div id="services-manager-widget" className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-6 space-y-4 mt-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-zinc-850 pb-3 gap-3">
+                <div>
+                  <h3 className="text-sm font-mono font-bold text-zinc-400 flex items-center gap-1.5 uppercase">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                    Services I Provide & Packages Console
+                  </h3>
+                  <p className="text-zinc-500 text-[10px] uppercase font-mono tracking-wider mt-0.5">
+                    Customize consultation services, deliverables, and timeline matrices here
+                  </p>
+                </div>
+                {!isAddingNewService && !editingService && (
+                  <button
+                    onClick={() => {
+                      setIsAddingNewService(true);
+                      setEditingService(null);
+                      setServiceForm({
+                        title: "",
+                        description: "",
+                        deliveryTime: "",
+                        features: "",
+                        iconName: "Globe"
+                      });
+                      setServiceError("");
+                    }}
+                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold font-mono text-xs rounded-lg transition uppercase flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    New Service Package
+                  </button>
+                )}
+              </div>
+
+              {/* Service creation / editing form in-place */}
+              {(isAddingNewService || editingService) && (
+                <form onSubmit={handleSaveService} className="bg-zinc-950 p-5 border border-zinc-850 rounded-xl space-y-4 font-mono text-xs animate-fade-in animate-duration-300">
+                  <div className="flex justify-between items-center text-blue-400 font-bold border-b border-zinc-850 pb-2">
+                    <span className="uppercase text-[10px] tracking-wider">
+                      {editingService ? `Edit Service: ${editingService.title}` : "Configure New Consulting Service Option"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingService(null);
+                        setIsAddingNewService(false);
+                        setServiceForm({ title: "", description: "", deliveryTime: "", features: "", iconName: "Globe" });
+                      }}
+                      className="text-zinc-500 hover:text-zinc-300 text-xs"
+                    >
+                      ✕ Cancel Form
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] text-zinc-400 uppercase font-bold mb-1">Service Title *</label>
+                      <input
+                        type="text"
+                        required
+                        value={serviceForm.title}
+                        onChange={(e) => setServiceForm({ ...serviceForm, title: e.target.value })}
+                        placeholder="e.g. Robust Node.js Microservice APIs"
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded p-2 text-xs text-zinc-250 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] text-zinc-400 uppercase font-bold mb-1">Delivery Time Matrix *</label>
+                      <input
+                        type="text"
+                        required
+                        value={serviceForm.deliveryTime}
+                        onChange={(e) => setServiceForm({ ...serviceForm, deliveryTime: e.target.value })}
+                        placeholder="e.g. 2 - 3 Weeks"
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded p-2 text-xs text-zinc-250 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] text-zinc-400 uppercase font-bold mb-1">Dashboard Class/Icon Name</label>
+                      <select
+                        value={serviceForm.iconName}
+                        onChange={(e) => setServiceForm({ ...serviceForm, iconName: e.target.value })}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded p-2 text-xs text-zinc-250 focus:outline-none focus:border-blue-500"
+                      >
+                        <option value="Globe">Globe (Network apps, Web tools)</option>
+                        <option value="Cpu">Cpu (Lower density microservices, systems)</option>
+                        <option value="Layers">Layers (Dashboard design, AI systems)</option>
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] text-zinc-400 uppercase font-bold mb-1">Brief Description *</label>
+                      <textarea
+                        required
+                        rows={2}
+                        value={serviceForm.description}
+                        onChange={(e) => setServiceForm({ ...serviceForm, description: e.target.value })}
+                        placeholder="Explain the overarching value metric for prospective clients..."
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded p-2.5 text-xs text-zinc-250 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="block text-[10px] text-zinc-400 uppercase font-bold">Included Delivering Features (One per line) *</label>
+                        <span className="text-zinc-500 text-[9px]">Type each deliverable on a new line</span>
+                      </div>
+                      <textarea
+                        required
+                        rows={4}
+                        value={serviceForm.features}
+                        onChange={(e) => setServiceForm({ ...serviceForm, features: e.target.value })}
+                        placeholder="e.g.&#10;Feature Deliverable 1&#10;Feature Deliverable 2&#10;Feature Deliverable 3"
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded p-2.5 text-xs text-zinc-250 focus:outline-none focus:border-blue-500 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {serviceError && (
+                    <p className="text-red-400 text-[10px] bg-red-950/20 border border-red-900/30 p-2 rounded">
+                      {serviceError}
+                    </p>
+                  )}
+
+                  <div className="flex justify-end gap-2.5 pt-2 border-t border-zinc-850/60">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingService(null);
+                        setIsAddingNewService(false);
+                        setServiceForm({ title: "", description: "", deliveryTime: "", features: "", iconName: "Globe" });
+                      }}
+                      className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-zinc-300 rounded text-[10px] font-bold uppercase tracking-wider transition"
+                    >
+                      Dismiss Form
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingService}
+                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-[10px] font-bold uppercase tracking-wider transition cursor-pointer"
+                    >
+                      {isSavingService ? "Saving..." : "Save Service Package"}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Grid of current services for edit / delete */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {servicesList.map((service) => {
+                  const IconComp = service.iconName === "Cpu" ? Cpu : service.iconName === "Layers" ? Layers : Globe;
+                  return (
+                    <div key={service.id} className="p-4 bg-zinc-950 border border-zinc-850 rounded-xl flex flex-col justify-between space-y-4">
+                      <div>
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="flex items-start gap-2.5">
+                            <span className="p-1.5 bg-blue-500/10 text-blue-400 rounded-md border border-blue-500/10 shrink-0">
+                              <IconComp className="w-3.5 h-3.5" />
+                            </span>
+                            <div>
+                              <h4 className="font-bold text-white text-xs leading-tight line-clamp-1">{service.title}</h4>
+                              <p className="text-zinc-500 text-[10px] leading-none mt-1 font-mono uppercase">
+                                {service.deliveryTime}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                        <p className="text-zinc-400 text-[11px] leading-relaxed mt-2.5 line-clamp-2">
+                          {service.description}
+                        </p>
+                        <div className="mt-2.5 space-y-1">
+                          {service.features.slice(0, 2).map((feat, i) => (
+                            <div key={i} className="flex items-center gap-1.5 text-zinc-500 text-[10px] truncate">
+                              <CheckCircle className="w-3 h-3 text-blue-500/80 shrink-0" />
+                              <span>{feat}</span>
+                            </div>
+                          ))}
+                          {service.features.length > 2 && (
+                            <span className="text-zinc-650 text-[9px] font-mono pl-4.5 block uppercase">
+                              + {service.features.length - 2} more deliverables
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-zinc-900">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingService(service);
+                            setServiceForm({
+                              title: service.title,
+                              description: service.description,
+                              deliveryTime: service.deliveryTime,
+                              features: service.features.join("\n"),
+                              iconName: service.iconName
+                            });
+                            setIsAddingNewService(false);
+                            setServiceError("");
+                          }}
+                          className="px-2 py-1 text-[9px] font-mono text-zinc-400 hover:text-blue-400 border border-zinc-800 hover:border-blue-900 rounded bg-zinc-900/60 transition flex items-center gap-1 cursor-pointer"
+                        >
+                          <Edit2 className="w-2.5 h-2.5" />
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteService(service.id)}
+                          className="px-2 py-1 text-[9px] font-mono text-zinc-400 hover:text-red-400 border border-zinc-800 hover:border-red-900 rounded bg-zinc-900/60 transition flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-2.5 h-2.5" />
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+
           </div>
         )}
 
@@ -2104,6 +2513,72 @@ export default function App() {
               </div>
 
             </div>
+
+            {/* NESTED SERVICES CATALOG SECTION */}
+            <div className="mt-5 grid grid-cols-1 gap-5 animate-fade-in animate-duration-300">
+              <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-zinc-850 pb-4 gap-3">
+                  <div>
+                    <h2 className="text-zinc-400 text-2xs font-bold uppercase tracking-widest flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                      Services I Provide & Engineered Solutions
+                    </h2>
+                    <p className="text-zinc-500 text-[10px] uppercase font-mono tracking-wider mt-0.5">
+                      High-fidelity consulting packages designed to take your software from concept to global scale
+                    </p>
+                  </div>
+                  <div className="bg-blue-600/10 text-blue-400 font-mono text-[9px] font-bold px-2.5 py-1 rounded border border-blue-500/20 uppercase">
+                    {servicesList.length} Active Offerings
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
+                  {servicesList.map((service) => {
+                    const IconComponent = service.iconName === "Cpu" ? Cpu : service.iconName === "Layers" ? Layers : Globe;
+                    return (
+                      <div key={service.id} className="relative group bg-zinc-950/60 hover:bg-zinc-950 border border-zinc-850 hover:border-zinc-700/60 rounded-xl p-5 flex flex-col justify-between transition-all duration-300">
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <div className="p-2.5 bg-blue-500/10 rounded-lg border border-blue-500/10 text-blue-400">
+                              <IconComponent className="w-5 h-5" />
+                            </div>
+                          </div>
+
+                          <div>
+                            <h3 className="text-sm font-bold text-white tracking-tight group-hover:text-blue-300 transition duration-350">
+                              {service.title}
+                            </h3>
+                            <p className="text-zinc-400 text-xs mt-2 font-sans leading-relaxed">
+                              {service.description}
+                            </p>
+                          </div>
+
+                          <div className="space-y-2 pt-3 border-t border-zinc-900">
+                            <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-wider block">Included Deliverables:</span>
+                            <ul className="space-y-1.5">
+                              {service.features.map((feat, idx) => (
+                                <li key={idx} className="flex items-start gap-2 text-zinc-300 text-[11px] leading-snug">
+                                  <CheckCircle className="w-3.5 h-3.5 text-blue-500 mt-0.5 shrink-0" />
+                                  <span>{feat}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+
+                        <div className="mt-5 pt-3 border-t border-zinc-900/60 flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                          <span>Delivery: {service.deliveryTime}</span>
+                          <span className="text-blue-400/80 group-hover:text-blue-400 transition cursor-pointer flex items-center gap-1 font-bold uppercase tracking-wider">
+                            Book Inquiry <ArrowRight className="w-3 h-3" />
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
 
           </div>
         )}

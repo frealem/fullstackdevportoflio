@@ -82,3 +82,14 @@ export interface Skill {
   level: number; // percentage 0-100
 }
 
+export interface Service {
+  id: string;
+  title: string;
+  description: string;
+  price?: string;
+  deliveryTime: string;
+  features: string[];
+  iconName: string;
+}
+
+

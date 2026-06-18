@@ -221,6 +221,53 @@ const DEFAULT_PROFILE_V2 = {
 
 let SERVER_PROFILE = { ...DEFAULT_PROFILE_V2 };
 
+const DEFAULT_SERVICES = [
+  {
+    id: "serv-1",
+    title: "Full-Stack SaaS Product Design & Engineering",
+    description: "End-to-end development of custom software products featuring beautiful responsive dashboards, real-time analytics, and high-security API routes.",
+    deliveryTime: "3 - 5 Weeks",
+    features: [
+      "Custom React & Vite Frontends",
+      "Robust Node.js Express or FastAPI backend API controllers",
+      "Database schema creation & optimization (Postgres/Mongo)",
+      "Interactive analytics charts utilizing Recharts & D3",
+      "Complete user authentication, security routing & JWT protocols"
+    ],
+    iconName: "Globe"
+  },
+  {
+    id: "serv-2",
+    title: "High-Speed Microservice Backend & API Integration",
+    description: "Low-latency microservices, security reverse proxies, rate limiters, and custom asynchronous queue controllers optimized for heavy loads.",
+    deliveryTime: "2 - 3 Weeks",
+    features: [
+      "Optimized Python FastAPI, Go, or Express.js services",
+      "Asynchronous webhook queues & background transaction worker threads",
+      "Redis caching & rate limiting middleware architecture",
+      "Secure API proxy setups shield third-party system secrets",
+      "Detailed telemetry tracking & custom system regex log parsers"
+    ],
+    iconName: "Cpu"
+  },
+  {
+    id: "serv-3",
+    title: "Interactive Admin Panels & Intelligent AI Grounding",
+    description: "Sophisticated developer dashboards connected to online databases, with custom prompt tuning or Gemini Search Grounding features.",
+    deliveryTime: "2 - 4 Weeks",
+    features: [
+      "Pristine Tailwind bento-grid administrative layouts",
+      "Gemini SDK custom prompt integration & strict JSON formatting",
+      "Full CRUD databases panels for portfolio, metrics, or content management",
+      "CSV & logs import/export utilities for bulk operations",
+      "Automated PDF or template generators (Cover Letters/Invoices/Brochures)"
+    ],
+    iconName: "Layers"
+  }
+];
+
+let SERVER_SERVICES = [...DEFAULT_SERVICES];
+
 // Persistent online cloud database hook Configuration
 const DB_FILE = path.join(process.cwd(), "db_portfolio.json");
 let mongoClient: MongoClient | null = null;
@@ -241,6 +288,7 @@ async function initDatabase() {
       const profileColl = mongoDb.collection("profile");
       const projectsColl = mongoDb.collection("projects");
       const skillsColl = mongoDb.collection("skills");
+      const servicesColl = mongoDb.collection("services");
 
       const hasProfile = await profileColl.findOne({ id: "profile-main" });
       if (!hasProfile) {
@@ -248,7 +296,14 @@ async function initDatabase() {
         await profileColl.insertOne({ id: "profile-main", ...DEFAULT_PROFILE_V2 });
         await projectsColl.insertMany(DEFAULT_PROJECTS);
         await skillsColl.insertMany(DEFAULT_SKILLS);
+        await servicesColl.insertMany(DEFAULT_SERVICES);
         console.log("Online seed completed successfully!");
+      } else {
+        const totalServices = await servicesColl.countDocuments();
+        if (totalServices === 0) {
+          console.log("Seeding online services collection with default packages...");
+          await servicesColl.insertMany(DEFAULT_SERVICES);
+        }
       }
 
       // Load data from Mongo
@@ -273,6 +328,14 @@ async function initDatabase() {
           return rest;
         });
       }
+
+      const mongoServices = await servicesColl.find({}).toArray();
+      if (mongoServices && mongoServices.length > 0) {
+        SERVER_SERVICES = mongoServices.map(s => {
+          const { _id, ...rest } = s as any;
+          return rest;
+        });
+      }
       return;
     } catch (err) {
       console.error("Failed to establish live Mongo database connection. Falling back to local workspace persistence...", err);
@@ -285,7 +348,8 @@ async function initDatabase() {
     const defaultDbData = {
       profile: DEFAULT_PROFILE_V2,
       projects: DEFAULT_PROJECTS,
-      skills: DEFAULT_SKILLS
+      skills: DEFAULT_SKILLS,
+      services: DEFAULT_SERVICES
     };
     if (!fs.existsSync(DB_FILE)) {
       fs.writeFileSync(DB_FILE, JSON.stringify(defaultDbData, null, 2), "utf8");
@@ -295,6 +359,7 @@ async function initDatabase() {
     SERVER_PROFILE = data.profile || DEFAULT_PROFILE_V2;
     SERVER_PROJECTS = data.projects || DEFAULT_PROJECTS;
     SERVER_SKILLS = data.skills || DEFAULT_SKILLS;
+    SERVER_SERVICES = data.services || DEFAULT_SERVICES;
     console.log("Synchronized with robust local persistent JSON database successfully.");
   } catch (err) {
     console.error("FS Database read anomaly, using in-memory live state:", err);
@@ -314,7 +379,7 @@ async function saveProfileState() {
   }
 
   try {
-    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS };
+    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS, services: SERVER_SERVICES };
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
   } catch (err) {
     console.error("FS Database save profile error:", err);
@@ -337,7 +402,7 @@ async function saveProjectsState() {
   }
 
   try {
-    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS };
+    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS, services: SERVER_SERVICES };
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
   } catch (err) {
     console.error("FS Database save projects error:", err);
@@ -360,12 +425,36 @@ async function saveSkillsState() {
   }
 
   try {
-    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS };
+    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS, services: SERVER_SERVICES };
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
   } catch (err) {
     console.error("FS Database save skills error:", err);
   }
 }
+
+async function saveServicesState() {
+  if (isMongoActive && mongoDb) {
+    try {
+      const coll = mongoDb.collection("services");
+      await coll.deleteMany({});
+      if (SERVER_SERVICES.length > 0) {
+        await coll.insertMany(SERVER_SERVICES);
+      }
+      console.log("Services list committed dynamically to MongoDB Atlas.");
+      return;
+    } catch (err) {
+      console.error("Mongo Services list write error:", err);
+    }
+  }
+
+  try {
+    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS, services: SERVER_SERVICES };
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error("FS Database save services error:", err);
+  }
+}
+
 
 
 
@@ -750,6 +839,73 @@ async function startServer() {
       return res.status(500).json({ error: err.message });
     }
   });
+
+  // API 8: Get current services
+  app.get("/api/services", (req, res) => {
+    return res.json({ services: SERVER_SERVICES });
+  });
+
+  // API 9: Add or update a service
+  app.post("/api/services", async (req, res) => {
+    try {
+      const { id, title, description, deliveryTime, features, iconName } = req.body;
+      if (!title || !description || !deliveryTime) {
+        return res.status(400).json({ error: "Missing required fields: title, description, and deliveryTime are required." });
+      }
+
+      const cleanFeatures = Array.isArray(features)
+        ? features
+        : String(features || "").split(",").map(f => f.trim()).filter(Boolean);
+
+      if (id) {
+        const idx = SERVER_SERVICES.findIndex(s => s.id === id);
+        if (idx !== -1) {
+          SERVER_SERVICES[idx] = {
+            id,
+            title,
+            description,
+            deliveryTime,
+            features: cleanFeatures,
+            iconName: iconName || "Globe"
+          };
+          await saveServicesState();
+          return res.json({ success: true, message: "Service package updated successfully on the server!", service: SERVER_SERVICES[idx] });
+        }
+      }
+
+      const newId = `serv-${Date.now()}`;
+      const newService = {
+        id: newId,
+        title,
+        description,
+        deliveryTime,
+        features: cleanFeatures,
+        iconName: iconName || "Globe"
+      };
+      SERVER_SERVICES.push(newService);
+      await saveServicesState();
+      return res.json({ success: true, message: "New service package added successfully on the server!", service: newService });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // API 10: Delete a service package
+  app.delete("/api/services/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const idx = SERVER_SERVICES.findIndex(s => s.id === id);
+      if (idx !== -1) {
+        SERVER_SERVICES.splice(idx, 1);
+        await saveServicesState();
+        return res.json({ success: true, message: "Service package deleted successfully on the server!" });
+      }
+      return res.status(404).json({ error: "Service package not found." });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
 
   // Vite Integration for development / static server for product
   if (process.env.NODE_ENV !== "production") {
