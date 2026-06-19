@@ -274,7 +274,49 @@ let mongoClient: MongoClient | null = null;
 let mongoDb: Db | null = null;
 let isMongoActive = false;
 
+// Shared backup manager to keep local db_portfolio.json aligned with memory and database
+async function saveBackupJSON() {
+  try {
+    const data = {
+      profile: SERVER_PROFILE,
+      projects: SERVER_PROJECTS,
+      skills: SERVER_SKILLS,
+      services: SERVER_SERVICES
+    };
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
+    console.log("Local backup database flat-file synchronized successfully.");
+  } catch (err) {
+    console.error("Failed to write to local backup db flat-file:", err);
+  }
+}
+
 async function initDatabase() {
+  // Pre-load current local file database if it exists to preserve custom items
+  let localCacheProfile = DEFAULT_PROFILE_V2;
+  let localCacheProjects = DEFAULT_PROJECTS;
+  let localCacheSkills = DEFAULT_SKILLS;
+  let localCacheServices = DEFAULT_SERVICES;
+
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      const dataStr = fs.readFileSync(DB_FILE, "utf8");
+      const data = JSON.parse(dataStr);
+      if (data.profile) localCacheProfile = data.profile;
+      if (Array.isArray(data.projects)) localCacheProjects = data.projects;
+      if (Array.isArray(data.skills)) localCacheSkills = data.skills;
+      if (Array.isArray(data.services)) localCacheServices = data.services;
+      console.log("Successfully extracted latest customized states from local cache.");
+    }
+  } catch (e) {
+    console.error("Local flat-file DB read warning:", e);
+  }
+
+  // Fallback memory arrays loaded with local cached items
+  SERVER_PROFILE = localCacheProfile;
+  SERVER_PROJECTS = localCacheProjects;
+  SERVER_SKILLS = localCacheSkills;
+  SERVER_SERVICES = localCacheServices;
+
   const mUri = process.env.MONGODB_URI;
   if (mUri) {
     try {
@@ -290,23 +332,46 @@ async function initDatabase() {
       const skillsColl = mongoDb.collection("skills");
       const servicesColl = mongoDb.collection("services");
 
+      // Verify if database needs absolute initial migration
       const hasProfile = await profileColl.findOne({ id: "profile-main" });
       if (!hasProfile) {
-        console.log("Seeding online MongoDB database with premium portfolio items...");
-        await profileColl.insertOne({ id: "profile-main", ...DEFAULT_PROFILE_V2 });
-        await projectsColl.insertMany(DEFAULT_PROJECTS);
-        await skillsColl.insertMany(DEFAULT_SKILLS);
-        await servicesColl.insertMany(DEFAULT_SERVICES);
-        console.log("Online seed completed successfully!");
+        console.log("Seeding online MongoDB Atlas with currently available customized portfolio config...");
+        await profileColl.insertOne({ id: "profile-main", ...SERVER_PROFILE });
+        
+        if (SERVER_PROJECTS.length > 0) {
+          const cleanProjs = SERVER_PROJECTS.map(({ _id, ...r }: any) => r);
+          await projectsColl.insertMany(cleanProjs);
+        }
+        if (SERVER_SKILLS.length > 0) {
+          const cleanSkills = SERVER_SKILLS.map(({ _id, ...r }: any) => r);
+          await skillsColl.insertMany(cleanSkills);
+        }
+        if (SERVER_SERVICES.length > 0) {
+          const cleanServices = SERVER_SERVICES.map(({ _id, ...r }: any) => r);
+          await servicesColl.insertMany(cleanServices);
+        }
+        console.log("Online Atlas initial seed and custom migration completed successfully!");
       } else {
+        // Handle individual collection auto-seeding if profile exists but some tables are empty
+        const totalProjects = await projectsColl.countDocuments();
+        if (totalProjects === 0 && SERVER_PROJECTS.length > 0) {
+          const cleanProjs = SERVER_PROJECTS.map(({ _id, ...r }: any) => r);
+          await projectsColl.insertMany(cleanProjs);
+        }
+        const totalSkills = await skillsColl.countDocuments();
+        if (totalSkills === 0 && SERVER_SKILLS.length > 0) {
+          const cleanSkills = SERVER_SKILLS.map(({ _id, ...r }: any) => r);
+          await skillsColl.insertMany(cleanSkills);
+        }
         const totalServices = await servicesColl.countDocuments();
-        if (totalServices === 0) {
-          console.log("Seeding online services collection with default packages...");
-          await servicesColl.insertMany(DEFAULT_SERVICES);
+        if (totalServices === 0 && SERVER_SERVICES.length > 0) {
+          const cleanServices = SERVER_SERVICES.map(({ _id, ...r }: any) => r);
+          await servicesColl.insertMany(cleanServices);
         }
       }
 
-      // Load data from Mongo
+      // Fully retrieve absolute latest values from MongoDB Atlas online
+      console.log("Retrieving absolute database state from MongoDB Atlas...");
       const mongoProfile = await profileColl.findOne({ id: "profile-main" });
       if (mongoProfile) {
         const { _id, ...rest } = mongoProfile as any;
@@ -314,28 +379,26 @@ async function initDatabase() {
       }
 
       const mongoProjects = await projectsColl.find({}).toArray();
-      if (mongoProjects && mongoProjects.length > 0) {
-        SERVER_PROJECTS = mongoProjects.map(p => {
-          const { _id, ...rest } = p as any;
-          return rest;
-        });
-      }
+      SERVER_PROJECTS = mongoProjects.map(p => {
+        const { _id, ...rest } = p as any;
+        return rest;
+      });
 
       const mongoSkills = await skillsColl.find({}).toArray();
-      if (mongoSkills && mongoSkills.length > 0) {
-        SERVER_SKILLS = mongoSkills.map(s => {
-          const { _id, ...rest } = s as any;
-          return rest;
-        });
-      }
+      SERVER_SKILLS = mongoSkills.map(s => {
+        const { _id, ...rest } = s as any;
+        return rest;
+      });
 
       const mongoServices = await servicesColl.find({}).toArray();
-      if (mongoServices && mongoServices.length > 0) {
-        SERVER_SERVICES = mongoServices.map(s => {
-          const { _id, ...rest } = s as any;
-          return rest;
-        });
-      }
+      SERVER_SERVICES = mongoServices.map(s => {
+        const { _id, ...rest } = s as any;
+        return rest;
+      });
+
+      // Maintain perfect synchronization on local cache JSON
+      await saveBackupJSON();
+      console.log("All systems updated from live Atlas state.");
       return;
     } catch (err) {
       console.error("Failed to establish live Mongo database connection. Falling back to local workspace persistence...", err);
@@ -343,26 +406,20 @@ async function initDatabase() {
     }
   }
 
-  // Resilient JSON flat-file database fallback
+  // Resilient JSON flat-file database fallback initialization
   try {
     const defaultDbData = {
-      profile: DEFAULT_PROFILE_V2,
-      projects: DEFAULT_PROJECTS,
-      skills: DEFAULT_SKILLS,
-      services: DEFAULT_SERVICES
+      profile: SERVER_PROFILE,
+      projects: SERVER_PROJECTS,
+      skills: SERVER_SKILLS,
+      services: SERVER_SERVICES
     };
     if (!fs.existsSync(DB_FILE)) {
       fs.writeFileSync(DB_FILE, JSON.stringify(defaultDbData, null, 2), "utf8");
     }
-    const dataStr = fs.readFileSync(DB_FILE, "utf8");
-    const data = JSON.parse(dataStr);
-    SERVER_PROFILE = data.profile || DEFAULT_PROFILE_V2;
-    SERVER_PROJECTS = data.projects || DEFAULT_PROJECTS;
-    SERVER_SKILLS = data.skills || DEFAULT_SKILLS;
-    SERVER_SERVICES = data.services || DEFAULT_SERVICES;
-    console.log("Synchronized with robust local persistent JSON database successfully.");
+    console.log("Synchronized fallback with robust local persistent JSON database.");
   } catch (err) {
-    console.error("FS Database read anomaly, using in-memory live state:", err);
+    console.error("FS Database Fallback initialization anomaly:", err);
   }
 }
 
@@ -370,89 +427,74 @@ async function saveProfileState() {
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("profile");
-      await coll.replaceOne({ id: "profile-main" }, { id: "profile-main", ...SERVER_PROFILE }, { upsert: true });
-      console.log("Profile changes committed dynamically to MongoDB Atlas.");
-      return;
+      const { _id, ...cleanProfile } = SERVER_PROFILE as any;
+      await coll.replaceOne({ id: "profile-main" }, { id: "profile-main", ...cleanProfile }, { upsert: true });
+      console.log("Profile changes successfully committed to MongoDB Atlas.");
     } catch (err) {
       console.error("Mongo Profile write error:", err);
     }
   }
-
-  try {
-    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS, services: SERVER_SERVICES };
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
-  } catch (err) {
-    console.error("FS Database save profile error:", err);
-  }
+  await saveBackupJSON();
 }
 
 async function saveProjectsState() {
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("projects");
+      const cleanProjects = SERVER_PROJECTS.map(p => {
+        const { _id, ...rest } = p as any;
+        return rest;
+      });
       await coll.deleteMany({});
-      if (SERVER_PROJECTS.length > 0) {
-        await coll.insertMany(SERVER_PROJECTS);
+      if (cleanProjects.length > 0) {
+        await coll.insertMany(cleanProjects);
       }
-      console.log("Projects list committed dynamically to MongoDB Atlas.");
-      return;
+      console.log("Projects list successfully committed to MongoDB Atlas.");
     } catch (err) {
       console.error("Mongo Projects list write error:", err);
     }
   }
-
-  try {
-    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS, services: SERVER_SERVICES };
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
-  } catch (err) {
-    console.error("FS Database save projects error:", err);
-  }
+  await saveBackupJSON();
 }
 
 async function saveSkillsState() {
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("skills");
+      const cleanSkills = SERVER_SKILLS.map(s => {
+        const { _id, ...rest } = s as any;
+        return rest;
+      });
       await coll.deleteMany({});
-      if (SERVER_SKILLS.length > 0) {
-        await coll.insertMany(SERVER_SKILLS);
+      if (cleanSkills.length > 0) {
+        await coll.insertMany(cleanSkills);
       }
-      console.log("Skills list committed dynamically to MongoDB Atlas.");
-      return;
+      console.log("Skills list successfully committed to MongoDB Atlas.");
     } catch (err) {
       console.error("Mongo Skills list write error:", err);
     }
   }
-
-  try {
-    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS, services: SERVER_SERVICES };
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
-  } catch (err) {
-    console.error("FS Database save skills error:", err);
-  }
+  await saveBackupJSON();
 }
 
 async function saveServicesState() {
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("services");
+      const cleanServices = SERVER_SERVICES.map(s => {
+        const { _id, ...rest } = s as any;
+        return rest;
+      });
       await coll.deleteMany({});
-      if (SERVER_SERVICES.length > 0) {
-        await coll.insertMany(SERVER_SERVICES);
+      if (cleanServices.length > 0) {
+        await coll.insertMany(cleanServices);
       }
-      console.log("Services list committed dynamically to MongoDB Atlas.");
-      return;
+      console.log("Services list successfully committed to MongoDB Atlas.");
     } catch (err) {
       console.error("Mongo Services list write error:", err);
     }
   }
-
-  try {
-    const data = { profile: SERVER_PROFILE, projects: SERVER_PROJECTS, skills: SERVER_SKILLS, services: SERVER_SERVICES };
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
-  } catch (err) {
-    console.error("FS Database save services error:", err);
-  }
+  await saveBackupJSON();
 }
 
 
