@@ -5,6 +5,8 @@ import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { MongoClient, Db } from "mongodb";
+import * as admin from "firebase-admin";
+import { getFirestore } from "firebase-admin/firestore";
 
 dotenv.config();
 
@@ -273,6 +275,11 @@ const DB_FILE = path.join(process.cwd(), "db_portfolio.json");
 let mongoClient: MongoClient | null = null;
 let mongoDb: Db | null = null;
 let isMongoActive = false;
+let connectionErrorString = "";
+
+let isFirebaseActive = false;
+let firebaseErrorString = "";
+let firebaseDb: ReturnType<typeof getFirestore> | null = null;
 
 // Shared backup manager to keep local db_portfolio.json aligned with memory and database
 async function saveBackupJSON() {
@@ -311,11 +318,124 @@ async function initDatabase() {
     console.error("Local flat-file DB read warning:", e);
   }
 
-  // Fallback memory arrays loaded with local cached items
+  // Fallback memory arrays loaded with local cached items initially
   SERVER_PROFILE = localCacheProfile;
   SERVER_PROJECTS = localCacheProjects;
   SERVER_SKILLS = localCacheSkills;
   SERVER_SERVICES = localCacheServices;
+
+  // Initialize Firebase Admin SDK & Connect to Firestore Database
+  const fbConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(fbConfigPath)) {
+    try {
+      console.log("Found Firebase config. Initializing Firebase Admin SDK...");
+      const fbConfig = JSON.parse(fs.readFileSync(fbConfigPath, "utf8"));
+      
+      admin.initializeApp({
+        projectId: fbConfig.projectId
+      });
+      
+      const dbId = fbConfig.firestoreDatabaseId || "(default)";
+      if (fbConfig.firestoreDatabaseId) {
+        firebaseDb = getFirestore(undefined, fbConfig.firestoreDatabaseId);
+      } else {
+        firebaseDb = getFirestore();
+      }
+      
+      console.log(`Firebase Admin connected to Firestore database: ${dbId}`);
+      isFirebaseActive = true;
+      firebaseErrorString = "";
+      
+      // Sync/seed Firebase Firestore
+      
+      // 1. Profile collection sync/seed
+      const profileDocRef = firebaseDb.collection("profile").doc("profile-main");
+      const pfSnap = await profileDocRef.get();
+      if (pfSnap.exists) {
+        console.log("Restored Profile state from live Firebase Firestore.");
+        const { id, ...rest } = pfSnap.data() as any;
+        SERVER_PROFILE = { id: id || "profile-main", ...rest };
+      } else {
+        console.log("Seeding profile document to live Firebase Firestore...");
+        const { _id, ...cleanProfile } = SERVER_PROFILE as any;
+        await profileDocRef.set({ id: "profile-main", ...cleanProfile });
+      }
+
+      // 2. Projects collection sync/seed
+      const projColl = firebaseDb.collection("projects");
+      const projSnap = await projColl.get();
+      if (!projSnap.empty) {
+        console.log(`Restored ${projSnap.size} projects from live Firebase Firestore.`);
+        const dbProjs: any[] = [];
+        projSnap.forEach(doc => {
+          dbProjs.push(doc.data());
+        });
+        SERVER_PROJECTS = dbProjs;
+      } else {
+        console.log("Seeding projects collection to live Firebase Firestore...");
+        const cleanProjs = SERVER_PROJECTS.map(p => {
+          const { _id, ...rest } = p as any;
+          return rest;
+        });
+        for (const p of cleanProjs) {
+          await projColl.doc(p.id).set(p);
+        }
+      }
+
+      // 3. Skills collection sync/seed
+      const skillColl = firebaseDb.collection("skills");
+      const skillSnap = await skillColl.get();
+      if (!skillSnap.empty) {
+        console.log(`Restored ${skillSnap.size} skills from live Firebase Firestore.`);
+        const dbSkills: any[] = [];
+        skillSnap.forEach(doc => {
+          dbSkills.push(doc.data());
+        });
+        SERVER_SKILLS = dbSkills;
+      } else {
+        console.log("Seeding skills collection to live Firebase Firestore...");
+        const cleanSkills = SERVER_SKILLS.map(s => {
+          const { _id, ...rest } = s as any;
+          return rest;
+        });
+        for (const s of cleanSkills) {
+          await skillColl.doc(s.id).set(s);
+        }
+      }
+
+      // 4. Services collection sync/seed
+      const servColl = firebaseDb.collection("services");
+      const servSnap = await servColl.get();
+      if (!servSnap.empty) {
+        console.log(`Restored ${servSnap.size} services from live Firebase Firestore.`);
+        const dbServs: any[] = [];
+        servSnap.forEach(doc => {
+          dbServs.push(doc.data());
+        });
+        SERVER_SERVICES = dbServs;
+      } else {
+        console.log("Seeding services collection to live Firebase Firestore...");
+        const cleanServs = SERVER_SERVICES.map(s => {
+          const { _id, ...rest } = s as any;
+          return rest;
+        });
+        for (const s of cleanServs) {
+          await servColl.doc(s.id).set(s);
+        }
+      }
+
+      console.log("All systems successfully connected and fully synced to live Firebase Firestore!");
+      await saveBackupJSON();
+      return; 
+    } catch (fbErr: any) {
+      isFirebaseActive = false;
+      firebaseErrorString = fbErr.message || String(fbErr);
+      console.error("Firebase connection / sync failed. Bypassing to default MongoDB/JSON paths.", fbErr);
+    }
+  } else {
+    firebaseErrorString = "firebase-applet-config.json not found in workspace root.";
+    console.warn("No firebase-applet-config.json found. Bypassing to default MongoDB/JSON paths.");
+  }
 
   const mUri = process.env.MONGODB_URI;
   if (mUri) {
@@ -323,87 +443,126 @@ async function initDatabase() {
       console.log("Connecting database to MongoDB Atlas online cloud cluster...");
       mongoClient = new MongoClient(mUri);
       await mongoClient.connect();
-      mongoDb = mongoClient.db("portfolio_db");
+
+      // Extract precise database name from the connection string to prevent using the wrong database in Atlas
+      let dbName = "portfolio_db";
+      try {
+        const parsedUrl = new URL(mUri.replace("mongodb+srv://", "http://").replace("mongodb://", "http://"));
+        const pathName = parsedUrl.pathname.replace(/^\//, "");
+        if (pathName) {
+          dbName = pathName;
+        }
+      } catch (urlErr) {
+        const pathMatch = mUri.match(/mongodb(?:\+srv)?:\/\/[^\/]+\/([^?#]+)/);
+        if (pathMatch && pathMatch[1]) {
+          dbName = pathMatch[1];
+        }
+      }
+
+      console.log(`Successfully connected. Target Mongo database defined: "${dbName}"`);
+      mongoDb = mongoClient.db(dbName);
       isMongoActive = true;
-      console.log("Connected to MongoDB Atlas successfully!");
+      connectionErrorString = "";
 
       const profileColl = mongoDb.collection("profile");
       const projectsColl = mongoDb.collection("projects");
       const skillsColl = mongoDb.collection("skills");
       const servicesColl = mongoDb.collection("services");
 
-      // Verify if database needs absolute initial migration
-      const hasProfile = await profileColl.findOne({ id: "profile-main" });
-      if (!hasProfile) {
-        console.log("Seeding online MongoDB Atlas with currently available customized portfolio config...");
-        await profileColl.insertOne({ id: "profile-main", ...SERVER_PROFILE });
-        
-        if (SERVER_PROJECTS.length > 0) {
-          const cleanProjs = SERVER_PROJECTS.map(({ _id, ...r }: any) => r);
-          await projectsColl.insertMany(cleanProjs);
-        }
-        if (SERVER_SKILLS.length > 0) {
-          const cleanSkills = SERVER_SKILLS.map(({ _id, ...r }: any) => r);
-          await skillsColl.insertMany(cleanSkills);
-        }
-        if (SERVER_SERVICES.length > 0) {
-          const cleanServices = SERVER_SERVICES.map(({ _id, ...r }: any) => r);
-          await servicesColl.insertMany(cleanServices);
-        }
-        console.log("Online Atlas initial seed and custom migration completed successfully!");
+      console.log("Analyzing existing document collections on live MongoDB Atlas database...");
+
+      // 1. Profile collection: check, load or seed
+      const liveProfile = await profileColl.findOne({ id: "profile-main" });
+      if (liveProfile) {
+        console.log("Found existing user Profile in MongoDB Atlas. Restoring live profile state.");
+        const { _id, ...cleanProfile } = liveProfile as any;
+        SERVER_PROFILE = cleanProfile;
       } else {
-        // Handle individual collection auto-seeding if profile exists but some tables are empty
-        const totalProjects = await projectsColl.countDocuments();
-        if (totalProjects === 0 && SERVER_PROJECTS.length > 0) {
-          const cleanProjs = SERVER_PROJECTS.map(({ _id, ...r }: any) => r);
+        console.log("No profile record found in MongoDB Atlas. Seeding custom profile state...");
+        const { _id: unused_pid, ...cleanProfile } = SERVER_PROFILE as any;
+        await profileColl.replaceOne({ id: "profile-main" }, { id: "profile-main", ...cleanProfile }, { upsert: true });
+      }
+
+      // 2. Projects collection: check, load or seed
+      const totalProjects = await projectsColl.countDocuments();
+      if (totalProjects > 0) {
+        console.log(`Found ${totalProjects} project documents in Atlas. Synchronizing projects in-memory.`);
+        const dbProjects = await projectsColl.find({}).toArray();
+        SERVER_PROJECTS = dbProjects.map(p => {
+          const { _id, ...rest } = p as any;
+          return rest;
+        });
+      } else {
+        console.log("No projects found in MongoDB Atlas. Seeding current memory custom projects list...");
+        const cleanProjs = SERVER_PROJECTS.map(p => {
+          const { _id, ...rest } = p as any;
+          return rest;
+        });
+        if (cleanProjs.length > 0) {
           await projectsColl.insertMany(cleanProjs);
         }
-        const totalSkills = await skillsColl.countDocuments();
-        if (totalSkills === 0 && SERVER_SKILLS.length > 0) {
-          const cleanSkills = SERVER_SKILLS.map(({ _id, ...r }: any) => r);
-          await skillsColl.insertMany(cleanSkills);
-        }
-        const totalServices = await servicesColl.countDocuments();
-        if (totalServices === 0 && SERVER_SERVICES.length > 0) {
-          const cleanServices = SERVER_SERVICES.map(({ _id, ...r }: any) => r);
-          await servicesColl.insertMany(cleanServices);
+      }
+
+      // 3. Skills collection: check, load or seed
+      const totalSkills = await skillsColl.countDocuments();
+      if (totalSkills > 0) {
+        console.log(`Found ${totalSkills} skill documents in Atlas. Synchronizing skills in-memory.`);
+        const dbSkills = await skillsColl.find({}).toArray();
+        SERVER_SKILLS = dbSkills.map(s => {
+          const { _id, ...rest } = s as any;
+          return rest;
+        });
+      } else {
+        console.log("No skills found in MongoDB Atlas. Seeding current memory custom skills list...");
+        const cleanSk = SERVER_SKILLS.map(s => {
+          const { _id, ...rest } = s as any;
+          return rest;
+        });
+        if (cleanSk.length > 0) {
+          await skillsColl.insertMany(cleanSk);
         }
       }
 
-      // Fully retrieve absolute latest values from MongoDB Atlas online
-      console.log("Retrieving absolute database state from MongoDB Atlas...");
-      const mongoProfile = await profileColl.findOne({ id: "profile-main" });
-      if (mongoProfile) {
-        const { _id, ...rest } = mongoProfile as any;
-        SERVER_PROFILE = rest;
+      // 4. Services collection: check, load or seed
+      const totalServices = await servicesColl.countDocuments();
+      if (totalServices > 0) {
+        console.log(`Found ${totalServices} service packages in Atlas. Synchronizing services in-memory.`);
+        const dbServices = await servicesColl.find({}).toArray();
+        SERVER_SERVICES = dbServices.map(s => {
+          const { _id, ...rest } = s as any;
+          return rest;
+        });
+      } else {
+        console.log("No services found in MongoDB Atlas. Seeding current memory custom services list...");
+        const cleanServ = SERVER_SERVICES.map(s => {
+          const { _id, ...rest } = s as any;
+          return rest;
+        });
+        if (cleanServ.length > 0) {
+          await servicesColl.insertMany(cleanServ);
+        }
       }
 
-      const mongoProjects = await projectsColl.find({}).toArray();
-      SERVER_PROJECTS = mongoProjects.map(p => {
-        const { _id, ...rest } = p as any;
-        return rest;
-      });
-
-      const mongoSkills = await skillsColl.find({}).toArray();
-      SERVER_SKILLS = mongoSkills.map(s => {
-        const { _id, ...rest } = s as any;
-        return rest;
-      });
-
-      const mongoServices = await servicesColl.find({}).toArray();
-      SERVER_SERVICES = mongoServices.map(s => {
-        const { _id, ...rest } = s as any;
-        return rest;
-      });
-
-      // Maintain perfect synchronization on local cache JSON
+      console.log("State synchronization between in-memory structures and live MongoDB Atlas collections finished successfully.");
       await saveBackupJSON();
-      console.log("All systems updated from live Atlas state.");
       return;
-    } catch (err) {
-      console.error("Failed to establish live Mongo database connection. Falling back to local workspace persistence...", err);
+    } catch (err: any) {
+      connectionErrorString = err.message || String(err);
+      console.error("\n========================= MONGO CONNECTION ERROR =========================");
+      console.error("DIAGNOSTICS & RESOLUTION CHECKLIST:");
+      console.error("1. Check MongoDB URI structure in your AI Studio secrets environment variable 'MONGODB_URI'.");
+      console.error("2. CRITICAL: Configure MongoDB Net Access IP whitelist to '0.0.0.0/0' (Allow Access from Anywhere) in your Atlas dashboard.");
+      console.error("   Reason: Cloud Run instances running AI Studio applets acquire dynamic IPs that change constantly.");
+      console.error("3. Verify your database username and password in the Mongo URI do not contain unencoded special characters.");
+      console.error(`Error description: ${connectionErrorString}`);
+      console.error("===========================================================================\n");
+      
+      console.warn("MongoDB setup bypassed temporarily. Continuing with robust local JSON persistence fallback.");
       isMongoActive = false;
     }
+  } else {
+    connectionErrorString = "MONGODB_URI environment variable is not defined or configured in Secrets panel.";
+    console.log("MONGODB_URI is undefined. Defaulting to workspace index-buffered JSON file database fallback.");
   }
 
   // Resilient JSON flat-file database fallback initialization
@@ -424,6 +583,16 @@ async function initDatabase() {
 }
 
 async function saveProfileState() {
+  if (isFirebaseActive && firebaseDb) {
+    try {
+      const docRef = firebaseDb.collection("profile").doc("profile-main");
+      const { _id, ...cleanProfile } = SERVER_PROFILE as any;
+      await docRef.set({ id: "profile-main", ...cleanProfile });
+      console.log("Profile changes successfully committed to Firebase Firestore.");
+    } catch (err) {
+      console.error("Firebase Profile write error:", err);
+    }
+  }
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("profile");
@@ -438,6 +607,25 @@ async function saveProfileState() {
 }
 
 async function saveProjectsState() {
+  if (isFirebaseActive && firebaseDb) {
+    try {
+      const coll = firebaseDb.collection("projects");
+      const docsSnap = await coll.get();
+      const batch = firebaseDb.batch();
+      docsSnap.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      SERVER_PROJECTS.forEach(proj => {
+        const { _id, ...cleanProj } = proj as any;
+        const docRef = coll.doc(proj.id);
+        batch.set(docRef, cleanProj);
+      });
+      await batch.commit();
+      console.log("Projects list successfully committed to Firebase Firestore.");
+    } catch (err) {
+      console.error("Firebase Projects list write error:", err);
+    }
+  }
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("projects");
@@ -458,6 +646,25 @@ async function saveProjectsState() {
 }
 
 async function saveSkillsState() {
+  if (isFirebaseActive && firebaseDb) {
+    try {
+      const coll = firebaseDb.collection("skills");
+      const docsSnap = await coll.get();
+      const batch = firebaseDb.batch();
+      docsSnap.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      SERVER_SKILLS.forEach(skill => {
+        const { _id, ...cleanSkill } = skill as any;
+        const docRef = coll.doc(skill.id);
+        batch.set(docRef, cleanSkill);
+      });
+      await batch.commit();
+      console.log("Skills list successfully committed to Firebase Firestore.");
+    } catch (err) {
+      console.error("Firebase Skills list write error:", err);
+    }
+  }
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("skills");
@@ -478,6 +685,25 @@ async function saveSkillsState() {
 }
 
 async function saveServicesState() {
+  if (isFirebaseActive && firebaseDb) {
+    try {
+      const coll = firebaseDb.collection("services");
+      const docsSnap = await coll.get();
+      const batch = firebaseDb.batch();
+      docsSnap.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      SERVER_SERVICES.forEach(service => {
+        const { _id, ...cleanService } = service as any;
+        const docRef = coll.doc(service.id);
+        batch.set(docRef, cleanService);
+      });
+      await batch.commit();
+      console.log("Services list successfully committed to Firebase Firestore.");
+    } catch (err) {
+      console.error("Firebase Services list write error:", err);
+    }
+  }
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("services");
@@ -538,6 +764,25 @@ async function startServer() {
     }
     return geminiAI;
   }
+
+  // API 0: Database Connection and Health Status Endpoint
+  app.get("/api/db-status", (req, res) => {
+    return res.json({
+      active: isFirebaseActive || isMongoActive,
+      firebaseActive: isFirebaseActive,
+      firebaseError: firebaseErrorString || null,
+      mongoActive: isMongoActive,
+      mongoError: connectionErrorString || null,
+      database: isFirebaseActive ? "Firebase Firestore (Live Production)" : (isMongoActive && mongoDb ? `MongoDB: ${mongoDb.databaseName}` : "Local Backup (Workspace Flat JSON Mode)"),
+      localCachePath: DB_FILE,
+      counts: {
+        profile: 1,
+        projects: SERVER_PROJECTS.length,
+        skills: SERVER_SKILLS.length,
+        services: SERVER_SERVICES.length
+      }
+    });
+  });
 
   // API 1: Fetch and search latest jobs using search grounding
   app.get("/api/jobs", async (req, res) => {

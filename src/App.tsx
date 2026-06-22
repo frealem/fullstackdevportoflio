@@ -292,6 +292,24 @@ export default function App() {
     }
   };
 
+  const [dbStatus, setDbStatus] = useState<any>(null);
+  const [isCheckingDb, setIsCheckingDb] = useState(false);
+
+  const fetchDbStatus = async () => {
+    setIsCheckingDb(true);
+    try {
+      const res = await fetch("/api/db-status");
+      const data = await res.json();
+      if (data) {
+        setDbStatus(data);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch database status from server:", err);
+    } finally {
+      setIsCheckingDb(false);
+    }
+  };
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingProfile(true);
@@ -494,6 +512,7 @@ export default function App() {
     fetchDynamicSkills();
     fetchDynamicProfile();
     fetchDynamicServices();
+    fetchDbStatus();
   }, []);
 
   // Sync selectedProject when projects list changes
@@ -982,7 +1001,126 @@ export default function App() {
         {/* TAB 1: ME & CAREER ENGINE VIEW (Jobs, Resume Advise, Applied Jobs Tracking) */}
         {activeTab === "career" && isUnlocked && (
           <div className="space-y-6">
-            
+            {/* CLOUD DATABASES CONNECTION STATUS PANEL */}
+            <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-5 shadow-lg animate-fade-in text-left">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-zinc-850 pb-4 mb-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    Live Production Cloud Database Hub
+                    {dbStatus?.active ? (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 font-normal">Online</span>
+                    ) : (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/25 text-amber-400 font-normal">Offline Fallback</span>
+                    )}
+                  </h3>
+                  <p className="text-zinc-500 text-xs">
+                    Primary Target Store: <span className="font-mono text-zinc-300 font-bold">{dbStatus?.database || "db_portfolio.json (Flat Backup)"}</span>
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={fetchDbStatus}
+                  disabled={isCheckingDb}
+                  className="px-3.5 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-750 text-zinc-300 rounded-lg border border-zinc-700 font-mono transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isCheckingDb ? 'animate-spin' : ''}`} />
+                  {isCheckingDb ? "Connecting..." : "Test Status"}
+                </button>
+              </div>
+
+              {/* Status breakdown grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+                {/* 1. Firebase Firestore Status */}
+                <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 flex items-start gap-3">
+                  <div className={`w-3 h-3 rounded-full mt-1.5 ${dbStatus?.firebaseActive ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'} border-4 ${dbStatus?.firebaseActive ? 'border-emerald-500/20' : 'border-red-500/20'}`} />
+                  <div className="space-y-1 flex-1">
+                    <span className="text-zinc-400 font-bold text-xs block">Firebase Firestore Cloud Database</span>
+                    {dbStatus?.firebaseActive ? (
+                      <span className="text-[10px] font-mono text-emerald-400 block font-semibold">Enabled & Primary Database store</span>
+                    ) : (
+                      <span className="text-[10px] font-mono text-zinc-500 block">Not configured in root workspace</span>
+                    )}
+                    {dbStatus?.firebaseError && (
+                      <span className="text-[10px] font-mono text-red-400 block overflow-hidden text-ellipsis whitespace-nowrap" title={dbStatus?.firebaseError}>
+                        Error: {dbStatus?.firebaseError}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. MongoDB Atlas Status */}
+                <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 flex items-start gap-3">
+                  <div className={`w-3 h-3 rounded-full mt-1.5 ${dbStatus?.mongoActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'} border-4 ${dbStatus?.mongoActive ? 'border-emerald-500/20' : 'border-amber-500/20'}`} />
+                  <div className="space-y-1 flex-1">
+                    <span className="text-zinc-400 font-bold text-xs block">MongoDB Atlas Cluster</span>
+                    {dbStatus?.mongoActive ? (
+                      <span className="text-[10px] font-mono text-emerald-400 block font-semibold">Connected, synchronized secondary store</span>
+                    ) : (
+                      <span className="text-[10px] font-mono text-zinc-500 block">Bypassed (Using Firebase Primary / Local Flat JSON fallback)</span>
+                    )}
+                    {dbStatus?.mongoError && (
+                      <span className="text-[10px] font-mono text-zinc-500 block overflow-hidden text-ellipsis whitespace-nowrap" title={dbStatus?.mongoError}>
+                        Status: Bypassed or Undefined Credentials
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {dbStatus?.active ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-left font-mono text-xs">
+                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
+                      <span className="text-zinc-500 block text-[10px] uppercase">Profile Records</span>
+                      <span className="text-white font-bold text-sm mt-1 block">1 Document</span>
+                    </div>
+                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
+                      <span className="text-zinc-500 block text-[10px] uppercase">Portfolio Projects</span>
+                      <span className="text-white font-bold text-sm mt-1 block">{dbStatus?.counts?.projects || portfolioProjects.length} Documents</span>
+                    </div>
+                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
+                      <span className="text-zinc-500 block text-[10px] uppercase">Knowledge Skills</span>
+                      <span className="text-white font-bold text-sm mt-1 block">{dbStatus?.counts?.skills || skillsList.length} Documents</span>
+                    </div>
+                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
+                      <span className="text-zinc-500 block text-[10px] uppercase">Service Packages</span>
+                      <span className="text-white font-bold text-sm mt-1 block">{dbStatus?.counts?.services || servicesList.length} Documents</span>
+                    </div>
+                  </div>
+
+                  {dbStatus?.firebaseActive && (
+                    <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 text-left">
+                      <h4 className="text-emerald-400 text-xs font-bold mb-2 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                        📋 How to inspect your data inside the Firebase Console:
+                      </h4>
+                      <ol className="text-zinc-300 text-xs space-y-2 list-decimal list-inside font-sans leading-relaxed">
+                        <li>Log in to your <strong className="text-emerald-400">Google Cloud Console / Firebase Console</strong> dashboard.</li>
+                        <li>Select your provisioned Firebase Project: <strong className="font-mono text-zinc-100 bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700">boxwood-oarlock-ns6r9</strong>.</li>
+                        <li>In the left-hand navigation sidebar, click on <strong className="text-white">Firestore Database</strong>.</li>
+                        <li>Under the "Data" tab, you will see your collections: 
+                          <span className="font-mono text-emerald-400 font-bold block mt-1 pl-5">
+                            • profile/profile-main | • projects | • skills | • services
+                          </span>
+                        </li>
+                        <li>Every change you make (editing skills, updating profile specs, creating projects) instantly commits to those collections!</li>
+                      </ol>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-amber-950/20 border border-amber-900/30 p-4 rounded-xl text-left">
+                    <h4 className="text-amber-400 font-bold text-xs mb-1">Diagnostic Report: Why are live databases offline?</h4>
+                    <p className="text-zinc-400 text-xs leading-relaxed font-mono whitespace-pre-wrap">
+                      {dbStatus?.firebaseError || "No Firebase credentials detected."}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Upper Bento row */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
               
