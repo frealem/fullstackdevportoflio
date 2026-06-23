@@ -1006,15 +1006,15 @@ export default function App() {
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-zinc-850 pb-4 mb-4">
                 <div className="space-y-1">
                   <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    Live Production Cloud Database Hub
-                    {dbStatus?.active ? (
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 font-normal">Online</span>
+                    Production MongoDB Atlas Database Hub
+                    {dbStatus?.mongoActive ? (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 font-normal">Live Connected</span>
                     ) : (
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/25 text-amber-400 font-normal">Offline Fallback</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/25 text-amber-400 font-normal font-bold">Local File Backup Mode</span>
                     )}
                   </h3>
                   <p className="text-zinc-500 text-xs">
-                    Primary Target Store: <span className="font-mono text-zinc-300 font-bold">{dbStatus?.database || "db_portfolio.json (Flat Backup)"}</span>
+                    Current Active Store: <span className="font-mono text-zinc-300 font-bold">{dbStatus?.database || "db_portfolio.json (Local File Fallback)"}</span>
                   </p>
                 </div>
 
@@ -1025,100 +1025,85 @@ export default function App() {
                   className="px-3.5 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-750 text-zinc-300 rounded-lg border border-zinc-700 font-mono transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isCheckingDb ? 'animate-spin' : ''}`} />
-                  {isCheckingDb ? "Connecting..." : "Test Status"}
+                  {isCheckingDb ? "Sync status..." : "Check Status"}
                 </button>
               </div>
 
               {/* Status breakdown grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
-                {/* 1. Firebase Firestore Status */}
+                {/* 1. MongoDB Atlas Status */}
                 <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 flex items-start gap-3">
-                  <div className={`w-3 h-3 rounded-full mt-1.5 ${dbStatus?.firebaseActive ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'} border-4 ${dbStatus?.firebaseActive ? 'border-emerald-500/20' : 'border-red-500/20'}`} />
+                  <div className={`w-3 h-3 rounded-full mt-1.5 ${dbStatus?.mongoActive ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'} border-4 ${dbStatus?.mongoActive ? 'border-emerald-500/20' : 'border-red-500/20'}`} />
                   <div className="space-y-1 flex-1">
-                    <span className="text-zinc-400 font-bold text-xs block">Firebase Firestore Cloud Database</span>
-                    {dbStatus?.firebaseActive ? (
-                      <span className="text-[10px] font-mono text-emerald-400 block font-semibold">Enabled & Primary Database store</span>
+                    <span className="text-zinc-300 font-bold text-xs block">MongoDB Atlas Cloud Cluster</span>
+                    {dbStatus?.mongoActive ? (
+                      <span className="text-[11px] font-mono text-emerald-400 block font-semibold">Active & Live Synced. All CRUD operations persist securely.</span>
                     ) : (
-                      <span className="text-[10px] font-mono text-zinc-500 block">Not configured in root workspace</span>
+                      <span className="text-[11px] font-mono text-zinc-500 block">Offline fallback active. Please configure MONGODB_URI in secrets.</span>
                     )}
-                    {dbStatus?.firebaseError && (
-                      <span className="text-[10px] font-mono text-red-400 block overflow-hidden text-ellipsis whitespace-nowrap" title={dbStatus?.firebaseError}>
-                        Error: {dbStatus?.firebaseError}
+                    {dbStatus?.mongoError && (
+                      <span className="text-[10px] font-mono text-red-400 block mt-1 overflow-hidden text-ellipsis whitespace-nowrap" title={dbStatus?.mongoError}>
+                        Config Trace: {dbStatus?.mongoError}
                       </span>
                     )}
                   </div>
                 </div>
 
-                {/* 2. MongoDB Atlas Status */}
+                {/* 2. Flat File Replication Status */}
                 <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 flex items-start gap-3">
-                  <div className={`w-3 h-3 rounded-full mt-1.5 ${dbStatus?.mongoActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'} border-4 ${dbStatus?.mongoActive ? 'border-emerald-500/20' : 'border-amber-500/20'}`} />
+                  <div className="w-3 h-3 rounded-full mt-1.5 bg-emerald-500 animate-pulse border-4 border-emerald-500/20" />
                   <div className="space-y-1 flex-1">
-                    <span className="text-zinc-400 font-bold text-xs block">MongoDB Atlas Cluster</span>
-                    {dbStatus?.mongoActive ? (
-                      <span className="text-[10px] font-mono text-emerald-400 block font-semibold">Connected, synchronized secondary store</span>
-                    ) : (
-                      <span className="text-[10px] font-mono text-zinc-500 block">Bypassed (Using Firebase Primary / Local Flat JSON fallback)</span>
-                    )}
-                    {dbStatus?.mongoError && (
-                      <span className="text-[10px] font-mono text-zinc-500 block overflow-hidden text-ellipsis whitespace-nowrap" title={dbStatus?.mongoError}>
-                        Status: Bypassed or Undefined Credentials
-                      </span>
-                    )}
+                    <span className="text-zinc-300 font-bold text-xs block">Local JSON File Replication</span>
+                    <span className="text-[11px] font-mono text-zinc-400 block">
+                      Sync target: <code className="text-emerald-400 font-bold font-mono">db_portfolio.json</code>. Always active as a dual-write hot replica.
+                    </span>
                   </div>
                 </div>
               </div>
 
-              {dbStatus?.active ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-left font-mono text-xs">
-                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
-                      <span className="text-zinc-500 block text-[10px] uppercase">Profile Records</span>
-                      <span className="text-white font-bold text-sm mt-1 block">1 Document</span>
-                    </div>
-                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
-                      <span className="text-zinc-500 block text-[10px] uppercase">Portfolio Projects</span>
-                      <span className="text-white font-bold text-sm mt-1 block">{dbStatus?.counts?.projects || portfolioProjects.length} Documents</span>
-                    </div>
-                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
-                      <span className="text-zinc-500 block text-[10px] uppercase">Knowledge Skills</span>
-                      <span className="text-white font-bold text-sm mt-1 block">{dbStatus?.counts?.skills || skillsList.length} Documents</span>
-                    </div>
-                    <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
-                      <span className="text-zinc-500 block text-[10px] uppercase">Service Packages</span>
-                      <span className="text-white font-bold text-sm mt-1 block">{dbStatus?.counts?.services || servicesList.length} Documents</span>
-                    </div>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-left font-mono text-xs">
+                  <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
+                    <span className="text-zinc-500 block text-[10px] uppercase">Profile Record</span>
+                    <span className="text-white font-bold text-sm mt-1 block">1 Document</span>
                   </div>
+                  <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
+                    <span className="text-zinc-500 block text-[10px] uppercase">Projects Catalog</span>
+                    <span className="text-white font-bold text-sm mt-1 block">{dbStatus?.counts?.projects || portfolioProjects.length} Documents</span>
+                  </div>
+                  <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
+                    <span className="text-zinc-500 block text-[10px] uppercase">Skills Map</span>
+                    <span className="text-white font-bold text-sm mt-1 block">{dbStatus?.counts?.skills || skillsList.length} Documents</span>
+                  </div>
+                  <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850">
+                    <span className="text-zinc-500 block text-[10px] uppercase">Consulting Packages</span>
+                    <span className="text-white font-bold text-sm mt-1 block">{dbStatus?.counts?.services || servicesList.length} Documents</span>
+                  </div>
+                </div>
 
-                  {dbStatus?.firebaseActive && (
-                    <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 text-left">
-                      <h4 className="text-emerald-400 text-xs font-bold mb-2 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                        📋 How to inspect your data inside the Firebase Console:
-                      </h4>
-                      <ol className="text-zinc-300 text-xs space-y-2 list-decimal list-inside font-sans leading-relaxed">
-                        <li>Log in to your <strong className="text-emerald-400">Google Cloud Console / Firebase Console</strong> dashboard.</li>
-                        <li>Select your provisioned Firebase Project: <strong className="font-mono text-zinc-100 bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700">boxwood-oarlock-ns6r9</strong>.</li>
-                        <li>In the left-hand navigation sidebar, click on <strong className="text-white">Firestore Database</strong>.</li>
-                        <li>Under the "Data" tab, you will see your collections: 
-                          <span className="font-mono text-emerald-400 font-bold block mt-1 pl-5">
-                            • profile/profile-main | • projects | • skills | • services
-                          </span>
-                        </li>
-                        <li>Every change you make (editing skills, updating profile specs, creating projects) instantly commits to those collections!</li>
-                      </ol>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="bg-amber-950/20 border border-amber-900/30 p-4 rounded-xl text-left">
-                    <h4 className="text-amber-400 font-bold text-xs mb-1">Diagnostic Report: Why are live databases offline?</h4>
-                    <p className="text-zinc-400 text-xs leading-relaxed font-mono whitespace-pre-wrap">
-                      {dbStatus?.firebaseError || "No Firebase credentials detected."}
-                    </p>
+                <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 text-left">
+                  <h4 className="text-cyan-400 text-xs font-bold mb-2 flex items-center gap-1.5 font-sans">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                    🚀 Deploying to Production (Render, Vercel, or Heroku):
+                  </h4>
+                  <p className="text-zinc-400 text-xs leading-relaxed mb-3">
+                    To make edits persistent across redeploys or standard server restarts, configure a single environment variable 
+                    in your hosting platform's Dashboard settings:
+                  </p>
+                  <div className="bg-zinc-900 border border-zinc-800 p-2.5 rounded-lg mb-4 font-mono text-xs text-zinc-300">
+                    <span className="text-yellow-400 font-bold block mb-1">🔑 Name: MONGODB_URI</span>
+                    <span className="text-emerald-400 break-all block">Value: mongodb+srv://username:password@cluster0.abcde.mongodb.net/portfolio_db?retryWrites=true&w=majority</span>
                   </div>
+                  
+                  <h5 className="text-zinc-300 font-bold text-xs mb-1">⚠️ Important Security and Whitelisting Steps:</h5>
+                  <ol className="text-zinc-400 text-xs space-y-1 list-decimal list-inside font-sans leading-relaxed">
+                    <li>Log into your <strong className="text-emerald-500 font-sans">MongoDB Atlas Consolidated console</strong>.</li>
+                    <li>Go to <strong className="text-zinc-200">Network Access</strong> (under Security tab in sidebar).</li>
+                    <li>Because Render containers run under dynamically allocated, spinning server IPs, you <strong className="text-emerald-400 font-bold font-sans">MUST</strong> whitelist <code className="bg-zinc-800 px-1 py-0.5 rounded border border-zinc-700 font-mono text-[10px] text-zinc-250">0.0.0.0/0</code> (Allow Access from Anywhere).</li>
+                    <li>MongoDB is now fully primed for production deployment! Every project create, skills map edit, or custom service change propagates instantly.</li>
+                  </ol>
                 </div>
-              )}
+              </div>
             </div>
 
             {/* Upper Bento row */}

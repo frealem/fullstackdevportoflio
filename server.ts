@@ -5,8 +5,6 @@ import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { MongoClient, Db } from "mongodb";
-import * as admin from "firebase-admin";
-import { getFirestore } from "firebase-admin/firestore";
 
 dotenv.config();
 
@@ -277,10 +275,6 @@ let mongoDb: Db | null = null;
 let isMongoActive = false;
 let connectionErrorString = "";
 
-let isFirebaseActive = false;
-let firebaseErrorString = "";
-let firebaseDb: ReturnType<typeof getFirestore> | null = null;
-
 // Shared backup manager to keep local db_portfolio.json aligned with memory and database
 async function saveBackupJSON() {
   try {
@@ -323,119 +317,6 @@ async function initDatabase() {
   SERVER_PROJECTS = localCacheProjects;
   SERVER_SKILLS = localCacheSkills;
   SERVER_SERVICES = localCacheServices;
-
-  // Initialize Firebase Admin SDK & Connect to Firestore Database
-  const fbConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-  if (fs.existsSync(fbConfigPath)) {
-    try {
-      console.log("Found Firebase config. Initializing Firebase Admin SDK...");
-      const fbConfig = JSON.parse(fs.readFileSync(fbConfigPath, "utf8"));
-      
-      admin.initializeApp({
-        projectId: fbConfig.projectId
-      });
-      
-      const dbId = fbConfig.firestoreDatabaseId || "(default)";
-      if (fbConfig.firestoreDatabaseId) {
-        firebaseDb = getFirestore(undefined, fbConfig.firestoreDatabaseId);
-      } else {
-        firebaseDb = getFirestore();
-      }
-      
-      console.log(`Firebase Admin connected to Firestore database: ${dbId}`);
-      isFirebaseActive = true;
-      firebaseErrorString = "";
-      
-      // Sync/seed Firebase Firestore
-      
-      // 1. Profile collection sync/seed
-      const profileDocRef = firebaseDb.collection("profile").doc("profile-main");
-      const pfSnap = await profileDocRef.get();
-      if (pfSnap.exists) {
-        console.log("Restored Profile state from live Firebase Firestore.");
-        const { id, ...rest } = pfSnap.data() as any;
-        SERVER_PROFILE = { id: id || "profile-main", ...rest };
-      } else {
-        console.log("Seeding profile document to live Firebase Firestore...");
-        const { _id, ...cleanProfile } = SERVER_PROFILE as any;
-        await profileDocRef.set({ id: "profile-main", ...cleanProfile });
-      }
-
-      // 2. Projects collection sync/seed
-      const projColl = firebaseDb.collection("projects");
-      const projSnap = await projColl.get();
-      if (!projSnap.empty) {
-        console.log(`Restored ${projSnap.size} projects from live Firebase Firestore.`);
-        const dbProjs: any[] = [];
-        projSnap.forEach(doc => {
-          dbProjs.push(doc.data());
-        });
-        SERVER_PROJECTS = dbProjs;
-      } else {
-        console.log("Seeding projects collection to live Firebase Firestore...");
-        const cleanProjs = SERVER_PROJECTS.map(p => {
-          const { _id, ...rest } = p as any;
-          return rest;
-        });
-        for (const p of cleanProjs) {
-          await projColl.doc(p.id).set(p);
-        }
-      }
-
-      // 3. Skills collection sync/seed
-      const skillColl = firebaseDb.collection("skills");
-      const skillSnap = await skillColl.get();
-      if (!skillSnap.empty) {
-        console.log(`Restored ${skillSnap.size} skills from live Firebase Firestore.`);
-        const dbSkills: any[] = [];
-        skillSnap.forEach(doc => {
-          dbSkills.push(doc.data());
-        });
-        SERVER_SKILLS = dbSkills;
-      } else {
-        console.log("Seeding skills collection to live Firebase Firestore...");
-        const cleanSkills = SERVER_SKILLS.map(s => {
-          const { _id, ...rest } = s as any;
-          return rest;
-        });
-        for (const s of cleanSkills) {
-          await skillColl.doc(s.id).set(s);
-        }
-      }
-
-      // 4. Services collection sync/seed
-      const servColl = firebaseDb.collection("services");
-      const servSnap = await servColl.get();
-      if (!servSnap.empty) {
-        console.log(`Restored ${servSnap.size} services from live Firebase Firestore.`);
-        const dbServs: any[] = [];
-        servSnap.forEach(doc => {
-          dbServs.push(doc.data());
-        });
-        SERVER_SERVICES = dbServs;
-      } else {
-        console.log("Seeding services collection to live Firebase Firestore...");
-        const cleanServs = SERVER_SERVICES.map(s => {
-          const { _id, ...rest } = s as any;
-          return rest;
-        });
-        for (const s of cleanServs) {
-          await servColl.doc(s.id).set(s);
-        }
-      }
-
-      console.log("All systems successfully connected and fully synced to live Firebase Firestore!");
-      await saveBackupJSON();
-      return; 
-    } catch (fbErr: any) {
-      isFirebaseActive = false;
-      firebaseErrorString = fbErr.message || String(fbErr);
-      console.error("Firebase connection / sync failed. Bypassing to default MongoDB/JSON paths.", fbErr);
-    }
-  } else {
-    firebaseErrorString = "firebase-applet-config.json not found in workspace root.";
-    console.warn("No firebase-applet-config.json found. Bypassing to default MongoDB/JSON paths.");
-  }
 
   const mUri = process.env.MONGODB_URI;
   if (mUri) {
@@ -583,16 +464,6 @@ async function initDatabase() {
 }
 
 async function saveProfileState() {
-  if (isFirebaseActive && firebaseDb) {
-    try {
-      const docRef = firebaseDb.collection("profile").doc("profile-main");
-      const { _id, ...cleanProfile } = SERVER_PROFILE as any;
-      await docRef.set({ id: "profile-main", ...cleanProfile });
-      console.log("Profile changes successfully committed to Firebase Firestore.");
-    } catch (err) {
-      console.error("Firebase Profile write error:", err);
-    }
-  }
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("profile");
@@ -607,25 +478,6 @@ async function saveProfileState() {
 }
 
 async function saveProjectsState() {
-  if (isFirebaseActive && firebaseDb) {
-    try {
-      const coll = firebaseDb.collection("projects");
-      const docsSnap = await coll.get();
-      const batch = firebaseDb.batch();
-      docsSnap.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-      SERVER_PROJECTS.forEach(proj => {
-        const { _id, ...cleanProj } = proj as any;
-        const docRef = coll.doc(proj.id);
-        batch.set(docRef, cleanProj);
-      });
-      await batch.commit();
-      console.log("Projects list successfully committed to Firebase Firestore.");
-    } catch (err) {
-      console.error("Firebase Projects list write error:", err);
-    }
-  }
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("projects");
@@ -646,25 +498,6 @@ async function saveProjectsState() {
 }
 
 async function saveSkillsState() {
-  if (isFirebaseActive && firebaseDb) {
-    try {
-      const coll = firebaseDb.collection("skills");
-      const docsSnap = await coll.get();
-      const batch = firebaseDb.batch();
-      docsSnap.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-      SERVER_SKILLS.forEach(skill => {
-        const { _id, ...cleanSkill } = skill as any;
-        const docRef = coll.doc(skill.id);
-        batch.set(docRef, cleanSkill);
-      });
-      await batch.commit();
-      console.log("Skills list successfully committed to Firebase Firestore.");
-    } catch (err) {
-      console.error("Firebase Skills list write error:", err);
-    }
-  }
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("skills");
@@ -685,25 +518,6 @@ async function saveSkillsState() {
 }
 
 async function saveServicesState() {
-  if (isFirebaseActive && firebaseDb) {
-    try {
-      const coll = firebaseDb.collection("services");
-      const docsSnap = await coll.get();
-      const batch = firebaseDb.batch();
-      docsSnap.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-      SERVER_SERVICES.forEach(service => {
-        const { _id, ...cleanService } = service as any;
-        const docRef = coll.doc(service.id);
-        batch.set(docRef, cleanService);
-      });
-      await batch.commit();
-      console.log("Services list successfully committed to Firebase Firestore.");
-    } catch (err) {
-      console.error("Firebase Services list write error:", err);
-    }
-  }
   if (isMongoActive && mongoDb) {
     try {
       const coll = mongoDb.collection("services");
@@ -768,12 +582,10 @@ async function startServer() {
   // API 0: Database Connection and Health Status Endpoint
   app.get("/api/db-status", (req, res) => {
     return res.json({
-      active: isFirebaseActive || isMongoActive,
-      firebaseActive: isFirebaseActive,
-      firebaseError: firebaseErrorString || null,
+      active: isMongoActive,
       mongoActive: isMongoActive,
       mongoError: connectionErrorString || null,
-      database: isFirebaseActive ? "Firebase Firestore (Live Production)" : (isMongoActive && mongoDb ? `MongoDB: ${mongoDb.databaseName}` : "Local Backup (Workspace Flat JSON Mode)"),
+      database: isMongoActive && mongoDb ? `MongoDB Atlas (${mongoDb.databaseName})` : "Local backup flat JSON database (db_portfolio.json)",
       localCachePath: DB_FILE,
       counts: {
         profile: 1,
@@ -1194,14 +1006,28 @@ async function startServer() {
   });
 
 
-  // Vite Integration for development / static server for product
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa"
-    });
-    app.use(vite.middlewares);
+  // Robust environment check: default to production static serving on hosts like Render
+  const isProd = process.env.NODE_ENV === "production" || 
+                 fs.existsSync(path.join(process.cwd(), "dist/index.html"));
+
+  if (!isProd) {
+    try {
+      console.log("Starting in Development mode with Vite live compiler...");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa"
+      });
+      app.use(vite.middlewares);
+    } catch (devErr) {
+      console.warn("Failed to initialize Vite development server, falling back to static files:", devErr);
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
   } else {
+    console.log("Starting in Production mode: serving statically compiled built folder.");
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
