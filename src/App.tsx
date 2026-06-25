@@ -106,7 +106,7 @@ const ANALYTICS_DATA = [
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"clients" | "about" | "contact" >("clients");
+  const [activeTab, setActiveTab] = useState<"career" | "clients" | "about" | "contact">("clients");
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
   // Secure workspace unlocking gate
@@ -967,6 +967,9 @@ export default function App() {
       localStorage.removeItem("frealem_dev_unlocked");
       localStorage.removeItem("ephraim_dev_unlocked");
       addToast("Console Locked", "Administrative developer console is now locked.", "info");
+      if (activeTab === "career") {
+        setActiveTab("clients");
+      }
     } else {
       setShowUnlockModal(true);
     }
@@ -1057,6 +1060,20 @@ export default function App() {
             Contact Me & Hire
           </button>
 
+          {isUnlocked && (
+            <button
+              onClick={() => setActiveTab("career")}
+              className={`px-4 py-2 rounded-xl transition-all duration-300 font-medium tracking-wide flex items-center gap-2 select-none cursor-pointer border ${
+                activeTab === "career"
+                  ? "bg-blue-600/10 text-blue-400 border-blue-500/30 shadow-md shadow-blue-500/5"
+                  : "text-zinc-400 hover:text-white hover:bg-zinc-900/40 border-transparent"
+              }`}
+            >
+              <Briefcase className="w-3.5 h-3.5" />
+              Career & Jobs Engine
+            </button>
+          )}
+
           {/* Administrative Unlock Status */}
           <div className="ml-auto">
             <span
@@ -1109,6 +1126,7 @@ export default function App() {
                   localStorage.setItem("frealem_dev_unlocked", "true");
                   setUnlockError("");
                   setShowUnlockModal(false);
+                  setActiveTab("career");
                   addToast("Identity Verified", "Welcome back, Frealem. Admin console unlocked.", "success");
                 } else {
                   setUnlockError("Verification Error: Invalid signature hash pin.");
@@ -1146,7 +1164,7 @@ export default function App() {
         )}
 
         {/* TAB 1: ME & CAREER ENGINE VIEW (Jobs, Resume Advise, Applied Jobs Tracking) */}
-        {false && isUnlocked && (
+        {activeTab === "career" && isUnlocked && (
           <div className="space-y-6">
             {/* CLOUD DATABASES CONNECTION STATUS PANEL */}
             <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-5 shadow-lg animate-fade-in text-left">
