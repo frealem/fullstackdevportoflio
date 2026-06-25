@@ -31,7 +31,8 @@ import {
   Trash2,
   Edit2,
   Globe,
-  Cpu
+  Cpu,
+  User
 } from "lucide-react";
 import { DEFAULT_PROFILE, PROJECTS } from "./profileData";
 import { Job, AppliedJob, ClientInquiry, Skill, Service } from "./types";
@@ -105,7 +106,7 @@ const ANALYTICS_DATA = [
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"clients" | "career">("clients");
+  const [activeTab, setActiveTab] = useState<"clients" | "about" | "contact" >("clients");
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
   // Secure workspace unlocking gate
@@ -117,6 +118,43 @@ export default function App() {
   });
   const [passcodeInput, setPasscodeInput] = useState("");
   const [unlockError, setUnlockError] = useState("");
+  const [showUnlockModal, setShowUnlockModal] = useState(false);
+
+  // Client inquiries inbox state for authorized administrators
+  const [inquiries, setInquiries] = useState<any[]>([]);
+  const [isLoadingInquiries, setIsLoadingInquiries] = useState(false);
+
+  const fetchInquiries = async () => {
+    setIsLoadingInquiries(true);
+    try {
+      const res = await fetch("/api/inquiries");
+      const data = await res.json();
+      if (data && Array.isArray(data.inquiries)) {
+        setInquiries(data.inquiries);
+      }
+    } catch (err) {
+      console.error("Failed to fetch client inquiries from backend server:", err);
+    } finally {
+      setIsLoadingInquiries(false);
+    }
+  };
+
+  const handleDeleteInquiry = async (id: string) => {
+    if (!window.confirm("Are you sure you want to permanently delete this client message? This will erase it from both MongoDB and the backup flat-file.")) return;
+    try {
+      const res = await fetch(`/api/inquiries/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        addToast("Inquiry Deleted", "The message has been permanently deleted from all storage systems.", "success");
+        setInquiries((prev) => prev.filter((i) => i.id !== id));
+      } else {
+        addToast("Delete Failed", data.error || "Failed to delete inquiry.", "warning");
+      }
+    } catch (err) {
+      console.error("Failed to delete inquiry: ", err);
+      addToast("Connection Error", "Could not reach the database backend server.", "warning");
+    }
+  };
 
   // Projects list state synchronized from database
   const [portfolioProjects, setPortfolioProjects] = useState<any[]>(PROJECTS);
@@ -513,7 +551,17 @@ export default function App() {
     fetchDynamicProfile();
     fetchDynamicServices();
     fetchDbStatus();
+    if (isUnlocked) {
+      fetchInquiries();
+    }
   }, []);
+
+  // Sync inquiries if administrator unlocks dashboard
+  useEffect(() => {
+    if (isUnlocked) {
+      fetchInquiries();
+    }
+  }, [isUnlocked]);
 
   // Sync selectedProject when projects list changes
   useEffect(() => {
@@ -801,39 +849,67 @@ export default function App() {
     }
   };
 
-  // Handle Client inquiry submission with instant dynamic projection mapping
-  const handleClientSubmit = (e: React.FormEvent) => {
+  // Handle Client inquiry submission with permanent MongoDB storage & Real email notifications
+  const handleClientSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientInquiry.clientName || !clientInquiry.clientEmail || !clientInquiry.projectDescription) {
-      alert("Please complete the required fields.");
+      addToast("Required Fields Missing", "Please complete all mandatory parameters.", "warning");
       return;
     }
 
     setInquiryStatus("submitting");
-    setTimeout(() => {
-      setInquiryStatus("success");
-      
-      // Calculate dynamic preview based on user selection
-      let timeline = "3-4 Weeks";
-      let hours = 110;
-      let techSuggested = ["React 19 / Vite", "Tailwind CSS", "TypeScript", "Node.js Express", "PostgreSQL"];
-      
-      if (clientInquiry.projectType === "E-commerce System") {
-        timeline = "5-6 Weeks";
-        hours = 180;
-        techSuggested.push("Redis Cash Routing", "OmniPay Payment Module");
-      } else if (clientInquiry.projectType === "Real-Time / Logistics Dashboard") {
-        timeline = "4-5 Weeks";
-        hours = 140;
-        techSuggested = ["React & D3 Charts", "Go (Golang) Microservice", "WebSockets Logs", "Docker"];
-      }
-
-      setSimulatedQuote({
-        timeline,
-        estimatedHours: hours,
-        techSuggested
+    try {
+      const response = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientName: clientInquiry.clientName,
+          clientEmail: clientInquiry.clientEmail,
+          companyName: clientInquiry.companyName || "N/A",
+          projectType: clientInquiry.projectType,
+          budgetRange: clientInquiry.budgetRange,
+          projectDescription: clientInquiry.projectDescription
+        })
       });
-    }, 1200);
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setInquiryStatus("success");
+        addToast("Inquiry Dispatched!", "Your message was saved permanently to MongoDB Atlas & routed to Frealem's inbox.", "success");
+        
+        // Calculate dynamic preview based on user selection
+        let timeline = "3-4 Weeks";
+        let hours = 110;
+        let techSuggested = ["React 19 / Vite", "Tailwind CSS", "TypeScript", "Node.js Express", "PostgreSQL"];
+        
+        if (clientInquiry.projectType === "E-commerce System") {
+          timeline = "5-6 Weeks";
+          hours = 180;
+          techSuggested.push("Redis Caching", "OmniPay East Africa Payment integration");
+        } else if (clientInquiry.projectType === "Real-Time / Logistics Dashboard") {
+          timeline = "4-5 Weeks";
+          hours = 140;
+          techSuggested = ["React & D3.js Charts", "Go (Golang) Ingress Gateway", "WebSockets logs channels", "Docker Containers"];
+        } else if (clientInquiry.projectType === "AI Integration / Prompt Engineering") {
+          timeline = "2-3 Weeks";
+          hours = 80;
+          techSuggested = ["Google GenAI SDK", "Gemini 3.5 Flash", "Structured JSON Schema outputs", "Node.js Controller Proxy"];
+        }
+
+        setSimulatedQuote({
+          timeline,
+          estimatedHours: hours,
+          techSuggested
+        });
+      } else {
+        setInquiryStatus("idle");
+        addToast("Submission Error", data.error || "Failed to commit inquiry to server storage.", "warning");
+      }
+    } catch (err: any) {
+      console.error("Submission error: ", err);
+      setInquiryStatus("idle");
+      addToast("Connection Error", "Could not reach the database backend server.", "warning");
+    }
   };
 
   const copyToClipboard = (text: string, label: string) => {
@@ -886,13 +962,13 @@ export default function App() {
   });
 
   const handleToggleTab = () => {
-    if (activeTab === "career") {
+    if (isUnlocked) {
       setIsUnlocked(false);
       localStorage.removeItem("frealem_dev_unlocked");
       localStorage.removeItem("ephraim_dev_unlocked");
-      setActiveTab("clients");
+      addToast("Console Locked", "Administrative developer console is now locked.", "info");
     } else {
-      setActiveTab("career");
+      setShowUnlockModal(true);
     }
   };
 
@@ -942,64 +1018,135 @@ export default function App() {
         </div>
       </header>
 
+      {/* Sleek Universal Navigation Tab Bar */}
+      <div className="max-w-7xl w-full mx-auto px-6 pt-5">
+        <nav className="flex flex-wrap items-center gap-2 border-b border-zinc-900/60 pb-3 font-mono text-xs">
+          <button
+            onClick={() => setActiveTab("clients")}
+            className={`px-4 py-2 rounded-xl transition-all duration-300 font-medium tracking-wide flex items-center gap-2 select-none cursor-pointer border ${
+              activeTab === "clients"
+                ? "bg-blue-600/10 text-blue-400 border-blue-500/30 shadow-md shadow-blue-500/5"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-900/40 border-transparent"
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            Interactive Showcases
+          </button>
+
+          <button
+            onClick={() => setActiveTab("about")}
+            className={`px-4 py-2 rounded-xl transition-all duration-300 font-medium tracking-wide flex items-center gap-2 select-none cursor-pointer border ${
+              activeTab === "about"
+                ? "bg-blue-600/10 text-blue-400 border-blue-500/30 shadow-md shadow-blue-500/5"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-900/40 border-transparent"
+            }`}
+          >
+            <User className="w-3.5 h-3.5" />
+            About Me
+          </button>
+
+          <button
+            onClick={() => setActiveTab("contact")}
+            className={`px-4 py-2 rounded-xl transition-all duration-300 font-medium tracking-wide flex items-center gap-2 select-none cursor-pointer border ${
+              activeTab === "contact"
+                ? "bg-blue-600/10 text-blue-400 border-blue-500/30 shadow-md shadow-blue-500/5"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-900/40 border-transparent"
+            }`}
+          >
+            <Mail className="w-3.5 h-3.5" />
+            Contact Me & Hire
+          </button>
+
+          {/* Administrative Unlock Status */}
+          <div className="ml-auto">
+            <span
+              onClick={handleToggleTab}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-widest transition cursor-pointer select-none border ${
+                isUnlocked
+                  ? "bg-emerald-500/5 text-emerald-400 border-emerald-500/20"
+                  : "bg-zinc-950 text-zinc-600 border-zinc-900 hover:text-zinc-400 hover:border-zinc-850"
+              }`}
+              title="Toggle Admin Security System"
+            >
+              {isUnlocked ? "● ADMIN UNLOCKED" : "○ DEVS CONSOLE"}
+            </span>
+          </div>
+        </nav>
+      </div>
+
       {/* Main Bento Grid Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-8">
         
-        {/* TAB 1: ME & CAREER ENGINE VIEW (Jobs, Resume Advise, Applied Jobs Tracking) */}
-        {activeTab === "career" && !isUnlocked && (
-          <div id="developer-gatekeeper-wall" className="max-w-md mx-auto bg-zinc-900 border border-zinc-800 rounded-2xl p-8 shadow-2xl space-y-6 text-center mt-12 mb-12">
-            <div className="mx-auto w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/25">
-              <ShieldCheck className="w-5 h-5 text-blue-400 animate-pulse" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-xl font-bold text-white font-display">Developer Console Locked</h2>
-              <p className="text-zinc-400 text-xs leading-relaxed">
-                The career dashboard, live application queues, and active showcase tools are restricted to Frealem&apos;s administrative usage.
-              </p>
-            </div>
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              const pin = passcodeInput.trim();
-              if (pin === "frealem55" || pin === "frealem-access" || pin === "ephraim55" || pin === "ephraim-access") {
-                setIsUnlocked(true);
-                localStorage.setItem("frealem_dev_unlocked", "true");
-                setUnlockError("");
-              } else {
-                setUnlockError("Verification Error: Invalid signature hash pin.");
-              }
-            }} className="space-y-4 text-left">
-              <div>
-                <label className="block text-[10px] text-zinc-500 font-mono font-semibold mb-1 uppercase tracking-wider">Secure Access Key Code</label>
-                <input
-                  type="password"
-                  value={passcodeInput}
-                  onChange={(e) => setPasscodeInput(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-2.5 text-xs text-zinc-100 placeholder-zinc-700 font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50"
-                  required
-                />
-                <span className="text-[10px] text-zinc-600 block mt-1.5 font-mono italic">This administrative console is restricted to certified administration only.</span>
-              </div>
-
-              {unlockError && (
-                <p className="text-red-400 text-[10px] bg-red-950/20 border border-red-900/40 p-2 rounded font-mono">
-                  {unlockError}
-                </p>
-              )}
-
+        {/* Verification modal for admin console */}
+        {showUnlockModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
+            <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-8 shadow-2xl space-y-6 text-center relative">
               <button
-                type="submit"
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold p-2.5 rounded-xl text-xs transition uppercase font-mono tracking-wider flex items-center justify-center gap-1.5 cursor-pointer"
+                type="button"
+                onClick={() => {
+                  setShowUnlockModal(false);
+                  setUnlockError("");
+                  setPasscodeInput("");
+                }}
+                className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-350 transition text-xs font-mono"
               >
-                <Terminal className="w-4 h-4" />
-                Deduce Identity Pin
+                ✕ Close
               </button>
-            </form>
+              <div className="mx-auto w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/25">
+                <ShieldCheck className="w-5 h-5 text-blue-400 animate-pulse" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-xl font-bold text-white font-display">Developer Console Verification</h2>
+                <p className="text-zinc-400 text-xs leading-relaxed">
+                  The admin console, inquiries database inbox, and dynamic system tools are restricted to Frealem&apos;s administrative usage.
+                </p>
+              </div>
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                const pin = passcodeInput.trim();
+                if (pin === "frealem55" || pin === "frealem-access" || pin === "ephraim55" || pin === "ephraim-access") {
+                  setIsUnlocked(true);
+                  localStorage.setItem("frealem_dev_unlocked", "true");
+                  setUnlockError("");
+                  setShowUnlockModal(false);
+                  addToast("Identity Verified", "Welcome back, Frealem. Admin console unlocked.", "success");
+                } else {
+                  setUnlockError("Verification Error: Invalid signature hash pin.");
+                }
+              }} className="space-y-4 text-left">
+                <div>
+                  <label className="block text-[10px] text-zinc-500 font-mono font-semibold mb-1 uppercase tracking-wider">Secure Access Key Code</label>
+                  <input
+                    type="password"
+                    value={passcodeInput}
+                    onChange={(e) => setPasscodeInput(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-2.5 text-xs text-zinc-100 placeholder-zinc-700 font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50"
+                    required
+                  />
+                  <span className="text-[10px] text-zinc-600 block mt-1.5 font-mono italic">This administrative console is restricted to certified administration only.</span>
+                </div>
+
+                {unlockError && (
+                  <p className="text-red-400 text-[10px] bg-red-950/20 border border-red-900/40 p-2 rounded font-mono">
+                    {unlockError}
+                  </p>
+                )}
+
+                <button
+                  type="submit"
+                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold p-2.5 rounded-xl text-xs transition uppercase font-mono tracking-wider flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Terminal className="w-4 h-4" />
+                  Deduce Identity Pin
+                </button>
+              </form>
+            </div>
           </div>
         )}
 
         {/* TAB 1: ME & CAREER ENGINE VIEW (Jobs, Resume Advise, Applied Jobs Tracking) */}
-        {activeTab === "career" && isUnlocked && (
+        {false && isUnlocked && (
           <div className="space-y-6">
             {/* CLOUD DATABASES CONNECTION STATUS PANEL */}
             <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-5 shadow-lg animate-fade-in text-left">
@@ -1104,6 +1251,92 @@ export default function App() {
                   </ol>
                 </div>
               </div>
+            </div>
+
+            {/* CLIENT INQUIRIES INBOX CARD */}
+            <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-5 shadow-lg animate-fade-in text-left space-y-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-zinc-850 pb-3 gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-blue-400" />
+                    Incoming Client Messages & Contracts
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/25 text-blue-400 font-normal">
+                      {inquiries.length} Messages
+                    </span>
+                  </h3>
+                  <p className="text-zinc-500 text-xs">
+                    Synchronized live with MongoDB collection <code className="text-emerald-400 font-mono">inquiries</code>
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={fetchInquiries}
+                  disabled={isLoadingInquiries}
+                  className="px-3.5 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-750 text-zinc-300 rounded-lg border border-zinc-700 font-mono transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingInquiries ? 'animate-spin' : ''}`} />
+                  Refresh Inbox
+                </button>
+              </div>
+
+              {isLoadingInquiries ? (
+                <div className="text-center py-8 text-zinc-500 font-mono text-2xs uppercase">
+                  <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-500" />
+                  Updating Live Inbox from MongoDB Atlas Cloud...
+                </div>
+              ) : inquiries.length === 0 ? (
+                <div className="text-center py-8 text-zinc-500 font-mono text-2xs uppercase border border-dashed border-zinc-850 rounded-xl bg-zinc-950/40">
+                  Inbox is currently empty. No active client contracts submitted.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[450px] overflow-y-auto pr-1">
+                  {inquiries.map((inq) => (
+                    <div key={inq.id} className="bg-zinc-950 p-4 rounded-xl border border-zinc-850 flex flex-col justify-between space-y-4 hover:border-zinc-750/80 transition duration-300">
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-start gap-2 border-b border-zinc-900 pb-2">
+                          <div>
+                            <h4 className="text-white font-bold text-xs">{inq.clientName}</h4>
+                            <p className="text-zinc-500 text-2xs font-mono">{inq.companyName || "No Company"}</p>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteInquiry(inq.id)}
+                            className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/15 hover:border-red-500/25 rounded-md transition cursor-pointer"
+                            title="Delete this message"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 font-mono text-[10px] text-zinc-400 uppercase">
+                          <div className="bg-zinc-900/60 p-2 rounded border border-zinc-900">
+                            <span className="text-[9px] text-zinc-650 block">System Type</span>
+                            <span className="text-blue-400 font-bold mt-0.5 block truncate">{inq.projectType}</span>
+                          </div>
+                          <div className="bg-zinc-900/60 p-2 rounded border border-zinc-900">
+                            <span className="text-[9px] text-zinc-650 block">Budget Tier</span>
+                            <span className="text-emerald-400 font-bold mt-0.5 block truncate">{inq.budgetRange}</span>
+                          </div>
+                        </div>
+
+                        <div className="bg-zinc-900/40 p-2.5 rounded border border-zinc-900 text-zinc-300 text-2xs leading-relaxed font-sans font-normal whitespace-pre-wrap max-h-[100px] overflow-y-auto">
+                          {inq.projectDescription}
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center text-[9px] font-mono text-zinc-500 border-t border-zinc-900 pt-2">
+                        <span>Submitted: {new Date(inq.dateSubmitted).toLocaleDateString()}</span>
+                        <a
+                          href={`mailto:${inq.clientEmail}`}
+                          className="text-blue-400 hover:text-blue-300 font-bold uppercase flex items-center gap-0.5"
+                        >
+                          Reply <ArrowRight className="w-3 h-3" />
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Upper Bento row */}
@@ -2703,6 +2936,589 @@ export default function App() {
             </div>
 
 
+          </div>
+        )}
+
+        {/* TAB 3: ABOUT ME VIEW */}
+        {activeTab === "about" && (
+          <div className="space-y-8 animate-fade-in animate-duration-300">
+            {/* Biography & Accolades Hero Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
+              {/* Primary bio & physical location card */}
+              <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 space-y-6 flex flex-col justify-between">
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 bg-blue-500/10 text-blue-400 font-mono text-[9px] font-bold rounded-full border border-blue-500/20 uppercase tracking-widest">
+                      ACADEMIC BACKGROUND
+                    </span>
+                    <span className="px-2.5 py-0.5 bg-zinc-800 text-zinc-300 font-mono text-[9px] font-bold rounded-full uppercase tracking-widest">
+                      AAU Alumni
+                    </span>
+                  </div>
+                  
+                  <h2 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight leading-snug">
+                    I am Frealem Tekalign, an Ethiopian-based software craftsman dedicated to high-fidelity, high-security digital systems.
+                  </h2>
+                  
+                  <p className="text-zinc-300 text-xs sm:text-sm leading-relaxed font-sans font-normal whitespace-pre-wrap">
+                    {profile.detailedBio || profile.bio}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-6 border-t border-zinc-850/60 mt-6 font-mono text-2xs uppercase text-zinc-400">
+                  <div className="p-3 bg-zinc-950/60 rounded-xl border border-zinc-850 flex items-center gap-2.5">
+                    <MapPin className="w-4 h-4 text-blue-500 shrink-0" />
+                    <div>
+                      <div className="text-[9px] text-zinc-500 leading-none">Location</div>
+                      <div className="font-bold text-white mt-1 leading-tight">Addis Ababa, ETH</div>
+                    </div>
+                  </div>
+                  <div className="p-3 bg-zinc-950/60 rounded-xl border border-zinc-850 flex items-center gap-2.5">
+                    <Award className="w-4 h-4 text-blue-500 shrink-0" />
+                    <div>
+                      <div className="text-[9px] text-zinc-500 leading-none">Education</div>
+                      <div className="font-bold text-white mt-1 leading-tight">AAU SE Degree</div>
+                    </div>
+                  </div>
+                  <div className="p-3 bg-zinc-950/60 rounded-xl border border-zinc-850 flex items-center gap-2.5">
+                    <Clock className="w-4 h-4 text-blue-500 shrink-0" />
+                    <div>
+                      <div className="text-[9px] text-zinc-500 leading-none">Availability</div>
+                      <div className="font-bold text-white mt-1 leading-tight">Global Async 40h/w</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick profile credentials card */}
+              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 flex flex-col justify-between space-y-6">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-start">
+                    <h3 className="font-mono text-2xs uppercase tracking-widest text-zinc-400">
+                      Core Philosophies
+                    </h3>
+                    <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="p-3 bg-zinc-950/80 rounded-xl border border-zinc-850 flex items-start gap-3">
+                      <span className="p-1.5 bg-emerald-500/10 text-emerald-400 rounded-lg border border-emerald-500/10 shrink-0">
+                        <FileCheck className="w-3.5 h-3.5" />
+                      </span>
+                      <div>
+                        <h4 className="text-white text-xs font-bold leading-tight">Pristine Quality & Craft</h4>
+                        <p className="text-zinc-500 text-[10px] mt-0.5 leading-relaxed font-sans">
+                          Never shipping unfinished modules or messy styling coordinates.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-zinc-950/80 rounded-xl border border-zinc-850 flex items-start gap-3">
+                      <span className="p-1.5 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/10 shrink-0">
+                        <Cpu className="w-3.5 h-3.5" />
+                      </span>
+                      <div>
+                        <h4 className="text-white text-xs font-bold leading-tight">Strict Type Integrity</h4>
+                        <p className="text-zinc-500 text-[10px] mt-0.5 leading-relaxed font-sans">
+                          100% compliant TypeScript compile patterns with zero fallback omissions.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-zinc-950/80 rounded-xl border border-zinc-850 flex items-start gap-3">
+                      <span className="p-1.5 bg-purple-500/10 text-purple-400 rounded-lg border border-purple-500/10 shrink-0">
+                        <Terminal className="w-3.5 h-3.5" />
+                      </span>
+                      <div>
+                        <h4 className="text-white text-xs font-bold leading-tight">Active Cloud Syncing</h4>
+                        <p className="text-zinc-500 text-[10px] mt-0.5 leading-relaxed font-sans">
+                          Every user transaction synchronized with dual MongoDB Atlas + local JSON backups.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-zinc-950/60 rounded-xl border border-zinc-850 text-2xs space-y-2.5 font-mono">
+                  <div className="flex justify-between items-center text-zinc-500">
+                    <span>Active Language:</span>
+                    <span className="text-zinc-300 font-bold">Amharic (Native)</span>
+                  </div>
+                  <div className="flex justify-between items-center text-zinc-500">
+                    <span>Tech Business:</span>
+                    <span className="text-zinc-300 font-bold">English (Fluent)</span>
+                  </div>
+                  <div className="flex justify-between items-center text-zinc-500">
+                    <span>Working Hours:</span>
+                    <span className="text-zinc-300 font-bold">08:00 - 20:00 EAT</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Structured Engineering Skill Matrix Grid */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 space-y-6">
+              <div>
+                <h3 className="font-mono text-2xs uppercase tracking-widest text-zinc-400 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                  Engineering Skill Matrix
+                </h3>
+                <p className="text-zinc-500 text-2xs uppercase font-mono mt-0.5">
+                  Comprehensive map of core capabilities compiled through active production deployments
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                
+                {/* Column 1: Frontend Ecosystem */}
+                <div className="p-5 bg-zinc-950/40 rounded-xl border border-zinc-850 space-y-4">
+                  <h4 className="text-white text-xs font-bold font-mono uppercase tracking-wider pb-2 border-b border-zinc-900 flex items-center justify-between">
+                    <span>1. Frontend Ecosystem</span>
+                    <span className="text-blue-400 text-[10px]">Active</span>
+                  </h4>
+                  <div className="space-y-3 font-mono text-2xs text-zinc-300">
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>React 18 / 19 & Next.js</span>
+                        <span className="text-zinc-500 font-bold">98%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full" style={{ width: "98%" }}></div></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>TypeScript (Strict Mode)</span>
+                        <span className="text-zinc-500 font-bold">96%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full" style={{ width: "96%" }}></div></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>Tailwind CSS & Animations</span>
+                        <span className="text-zinc-500 font-bold">95%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full" style={{ width: "95%" }}></div></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>State Management (Zustand/Redux)</span>
+                        <span className="text-zinc-500 font-bold">92%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full" style={{ width: "92%" }}></div></div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Column 2: Backend & Distributed Architectures */}
+                <div className="p-5 bg-zinc-950/40 rounded-xl border border-zinc-850 space-y-4">
+                  <h4 className="text-white text-xs font-bold font-mono uppercase tracking-wider pb-2 border-b border-zinc-900 flex items-center justify-between">
+                    <span>2. Backend Controllers</span>
+                    <span className="text-emerald-400 text-[10px]">Production</span>
+                  </h4>
+                  <div className="space-y-3 font-mono text-2xs text-zinc-300">
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>Node.js, Express & Bun</span>
+                        <span className="text-zinc-500 font-bold">95%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 rounded-full" style={{ width: "95%" }}></div></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>Rest APIs & WebSocket Logs</span>
+                        <span className="text-zinc-500 font-bold">94%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 rounded-full" style={{ width: "94%" }}></div></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>FastAPI & Python Frameworks</span>
+                        <span className="text-zinc-500 font-bold">88%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 rounded-full" style={{ width: "88%" }}></div></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>Security Middleware & SMTP</span>
+                        <span className="text-zinc-500 font-bold">90%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-emerald-500 rounded-full" style={{ width: "90%" }}></div></div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Column 3: Persistence & DevOps Platforms */}
+                <div className="p-5 bg-zinc-950/40 rounded-xl border border-zinc-850 space-y-4">
+                  <h4 className="text-white text-xs font-bold font-mono uppercase tracking-wider pb-2 border-b border-zinc-900 flex items-center justify-between">
+                    <span>3. Persistence & DevOps</span>
+                    <span className="text-purple-400 text-[10px]">Cloud</span>
+                  </h4>
+                  <div className="space-y-3 font-mono text-2xs text-zinc-300">
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>MongoDB Atlas & Relational SQL</span>
+                        <span className="text-zinc-500 font-bold">92%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-purple-500 rounded-full" style={{ width: "92%" }}></div></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>Docker Containerization</span>
+                        <span className="text-zinc-500 font-bold">85%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-purple-500 rounded-full" style={{ width: "85%" }}></div></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>Render / AWS Cloud Run</span>
+                        <span className="text-zinc-500 font-bold">88%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-purple-500 rounded-full" style={{ width: "88%" }}></div></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between">
+                        <span>Google Gemini AI SDK</span>
+                        <span className="text-zinc-500 font-bold">94%</span>
+                      </div>
+                      <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-purple-500 rounded-full" style={{ width: "94%" }}></div></div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* TAB 4: CONTACT ME & HIRE VIEW */}
+        {activeTab === "contact" && (
+          <div className="space-y-8 animate-fade-in animate-duration-300">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              
+              {/* Left Column: Direct contact channels & Contract badges */}
+              <div className="lg:col-span-5 space-y-6">
+                
+                {/* Urgent notification disclaimer */}
+                <div className="p-5 bg-gradient-to-r from-blue-600/10 to-transparent border border-blue-500/20 rounded-2xl space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+                    <h4 className="text-white text-xs font-bold font-mono uppercase tracking-wider">Fast-Route Dispatch</h4>
+                  </div>
+                  <p className="text-zinc-400 text-2xs leading-relaxed font-sans font-normal">
+                    Submitting this form commits your message directly to my MongoDB cloud databases and triggers an instantaneous direct notification alert to my primary inbox <strong>exprefgfg@gmail.com</strong> with high-importance priorities.
+                  </p>
+                </div>
+
+                {/* Live Credentials Sidebar */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-5">
+                  <h3 className="font-mono text-2xs uppercase tracking-widest text-zinc-400 pb-3 border-b border-zinc-850 flex justify-between items-center">
+                    <span>Direct Credentials</span>
+                    <span className="text-zinc-650 text-[9px] font-bold font-mono">LIVE DIRECTORY</span>
+                  </h3>
+
+                  <div className="space-y-3">
+                    
+                    {/* Primary Email */}
+                    <div className="p-3 bg-zinc-950/80 rounded-xl border border-zinc-850 flex items-center justify-between group transition">
+                      <div className="flex items-center gap-3">
+                        <span className="p-2 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/10">
+                          <Mail className="w-4 h-4" />
+                        </span>
+                        <div>
+                          <span className="text-[10px] text-zinc-500 font-mono block uppercase">PRIMARY EMAIL</span>
+                          <a href="mailto:exprefgfg@gmail.com" className="text-white hover:text-blue-400 text-xs font-semibold select-all font-mono">
+                            exprefgfg@gmail.com
+                          </a>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => copyToClipboard("exprefgfg@gmail.com", "Email address")}
+                        className="text-zinc-600 hover:text-zinc-350 p-1 rounded font-mono text-[9px] uppercase font-bold"
+                        title="Copy direct email address"
+                      >
+                        Copy
+                      </button>
+                    </div>
+
+                    {/* Upwork Direct Contract Portal */}
+                    <div className="p-3 bg-zinc-950/80 rounded-xl border border-zinc-850 flex items-center justify-between group transition">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg border border-emerald-500/10 shrink-0">
+                          <Briefcase className="w-4 h-4" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-[10px] text-emerald-500 font-mono block uppercase font-bold tracking-wider">UPWORK DIRECT HIRE</span>
+                          <a 
+                            href="https://www.upwork.com/freelancers/~01a58722532efa8600?mp_source=share" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="text-white hover:text-emerald-400 text-xs font-semibold truncate block"
+                          >
+                            Go to Upwork Profile
+                          </a>
+                        </div>
+                      </div>
+                      <a 
+                        href="https://www.upwork.com/freelancers/~01a58722532efa8600?mp_source=share" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="p-1 text-emerald-500 hover:text-emerald-400 font-mono text-[9px] uppercase font-bold flex items-center gap-0.5 shrink-0"
+                        title="Visit Upwork Profile"
+                      >
+                        Visit <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+
+                    {/* LinkedIn Professional Network */}
+                    <div className="p-3 bg-zinc-950/80 rounded-xl border border-zinc-850 flex items-center justify-between group transition">
+                      <div className="flex items-center gap-3">
+                        <span className="p-2 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/10">
+                          <Linkedin className="w-4 h-4" />
+                        </span>
+                        <div>
+                          <span className="text-[10px] text-zinc-500 font-mono block uppercase">LINKEDIN NETWORK</span>
+                          <a 
+                            href="https://linkedin.com/in/frealemtekalign" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="text-white hover:text-blue-400 text-xs font-semibold"
+                          >
+                            frealemtekalign
+                          </a>
+                        </div>
+                      </div>
+                      <a 
+                        href="https://linkedin.com/in/frealemtekalign" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="p-1 text-blue-500 hover:text-blue-400 font-mono text-[9px] uppercase font-bold flex items-center gap-0.5"
+                      >
+                        Visit <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+
+                    {/* GitHub Codebase Repository */}
+                    <div className="p-3 bg-zinc-950/80 rounded-xl border border-zinc-850 flex items-center justify-between group transition">
+                      <div className="flex items-center gap-3">
+                        <span className="p-2 bg-zinc-800 text-zinc-300 rounded-lg border border-zinc-850">
+                          <Github className="w-4 h-4" />
+                        </span>
+                        <div>
+                          <span className="text-[10px] text-zinc-500 font-mono block uppercase">GITHUB ENGINE</span>
+                          <a 
+                            href="https://github.com/frealem-tekalign" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="text-white hover:text-zinc-350 text-xs font-semibold"
+                          >
+                            @frealem-tekalign
+                          </a>
+                        </div>
+                      </div>
+                      <a 
+                        href="https://github.com/frealem-tekalign" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="p-1 text-zinc-400 hover:text-zinc-200 font-mono text-[9px] uppercase font-bold flex items-center gap-0.5"
+                      >
+                        Visit <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Right Column: Interactive Contract Submission Form */}
+              <div className="lg:col-span-7 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 space-y-6">
+                
+                {inquiryStatus !== "success" ? (
+                  <form onSubmit={handleClientSubmit} className="space-y-5">
+                    <div>
+                      <h3 className="text-white font-bold text-lg font-display tracking-tight">
+                        Launch a Direct Contract Request
+                      </h3>
+                      <p className="text-zinc-500 text-2xs uppercase font-mono tracking-wider mt-0.5">
+                        Complete your system details to receive an instant timeline & technology architectural outline
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Full Name */}
+                      <div className="space-y-1.5">
+                        <label className="text-zinc-400 font-mono text-[10px] uppercase font-bold">Your Full Name <span className="text-blue-500">*</span></label>
+                        <input
+                          type="text"
+                          required
+                          value={clientInquiry.clientName}
+                          onChange={(e) => setClientInquiry({ ...clientInquiry, clientName: e.target.value })}
+                          placeholder="e.g. Alexander Graham"
+                          className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-2.5 text-white font-sans text-xs focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all duration-300 animate-none"
+                        />
+                      </div>
+
+                      {/* Contact Email */}
+                      <div className="space-y-1.5">
+                        <label className="text-zinc-400 font-mono text-[10px] uppercase font-bold">Contact Email <span className="text-blue-500">*</span></label>
+                        <input
+                          type="email"
+                          required
+                          value={clientInquiry.clientEmail}
+                          onChange={(e) => setClientInquiry({ ...clientInquiry, clientEmail: e.target.value })}
+                          placeholder="e.g. client@company.com"
+                          className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-2.5 text-white font-sans text-xs focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all duration-300 animate-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Project Type */}
+                      <div className="space-y-1.5">
+                        <label className="text-zinc-400 font-mono text-[10px] uppercase font-bold">Project Core System</label>
+                        <select
+                          value={clientInquiry.projectType}
+                          onChange={(e) => setClientInquiry({ ...clientInquiry, projectType: e.target.value })}
+                          className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-2.5 text-white font-mono text-xs focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all duration-300 select-none cursor-pointer"
+                        >
+                          <option value="Full-Stack SaaS">Full-Stack SaaS Web Application</option>
+                          <option value="E-commerce System">E-commerce Multi-Vendor System</option>
+                          <option value="Real-Time / Logistics Dashboard">Real-Time Analytical Dashboard</option>
+                          <option value="AI Integration / Prompt Engineering">AI Core Integration (Gemini/LLMs)</option>
+                          <option value="General Consultation">Developer Consultation Hour</option>
+                        </select>
+                      </div>
+
+                      {/* Budget Range */}
+                      <div className="space-y-1.5">
+                        <label className="text-zinc-400 font-mono text-[10px] uppercase font-bold">Budget Tier (USD)</label>
+                        <select
+                          value={clientInquiry.budgetRange}
+                          onChange={(e) => setClientInquiry({ ...clientInquiry, budgetRange: e.target.value })}
+                          className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-2.5 text-white font-mono text-xs focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all duration-300 select-none cursor-pointer"
+                        >
+                          <option value="< $5,000">Below $5,000 USD</option>
+                          <option value="$5,000 - $10,000">$5,000 - $10,000 USD</option>
+                          <option value="$10,000 - $20,000">$10,000 - $20,000 USD</option>
+                          <option value="Custom Contract">Custom Retainer Agreement</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Company Name */}
+                    <div className="space-y-1.5">
+                      <label className="text-zinc-400 font-mono text-[10px] uppercase font-bold">Company / Team Name <span className="text-zinc-600 font-normal">(Optional)</span></label>
+                      <input
+                        type="text"
+                        value={clientInquiry.companyName}
+                        onChange={(e) => setClientInquiry({ ...clientInquiry, companyName: e.target.value })}
+                        placeholder="e.g. Acme Tech Solutions"
+                        className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-2.5 text-white font-sans text-xs focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all duration-300 animate-none"
+                      />
+                    </div>
+
+                    {/* Project Description */}
+                    <div className="space-y-1.5">
+                      <label className="text-zinc-400 font-mono text-[10px] uppercase font-bold">Project Scope & Specifications <span className="text-blue-500">*</span></label>
+                      <textarea
+                        required
+                        rows={5}
+                        value={clientInquiry.projectDescription}
+                        onChange={(e) => setClientInquiry({ ...clientInquiry, projectDescription: e.target.value })}
+                        placeholder="Please describe what system you would like built, including core capabilities, pages, and target deadlines..."
+                        className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-3 text-white font-sans text-xs focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all duration-300 resize-none leading-relaxed animate-none"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={inquiryStatus === "submitting"}
+                      className="w-full bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs font-bold py-3 px-6 rounded-xl transition duration-300 shadow-lg shadow-blue-600/15 cursor-pointer select-none flex items-center justify-center gap-2"
+                    >
+                      {inquiryStatus === "submitting" ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          DISPATCHING METADATA TO ATLAS...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-3.5 h-3.5" />
+                          SUBMIT SECURE ENCRYPTED INQUIRY
+                        </>
+                      )}
+                    </button>
+                  </form>
+                ) : (
+                  // Success State: Display Custom Quotation / Proposal mapping
+                  <div className="space-y-6 animate-fade-in animate-duration-500 text-center py-6">
+                    <div className="w-14 h-14 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto">
+                      <CheckCircle className="w-6 h-6" />
+                    </div>
+
+                    <div className="space-y-2">
+                      <h3 className="text-white font-bold text-lg font-display">Inquiry Confirmed & Transmitted</h3>
+                      <p className="text-zinc-400 text-xs font-mono uppercase tracking-wider">
+                        Real-time synchronization successful
+                      </p>
+                    </div>
+
+                    <div className="p-5 bg-zinc-950/80 rounded-2xl border border-zinc-850 text-left space-y-4 max-w-xl mx-auto">
+                      <h4 className="text-[11px] font-mono text-blue-400 uppercase tracking-widest border-b border-zinc-900 pb-2">
+                        System Estimated Architecture
+                      </h4>
+                      
+                      <div className="grid grid-cols-2 gap-4 font-mono text-2xs text-zinc-400 uppercase">
+                        <div>
+                          <span className="text-[10px] text-zinc-650 block leading-none">TIMELINE ESTIMATION</span>
+                          <span className="text-white font-bold mt-1 block text-xs">{simulatedQuote?.timeline}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-zinc-650 block leading-none">TOTAL DEVELOPMENT HOURS</span>
+                          <span className="text-white font-bold mt-1 block text-xs">{simulatedQuote?.estimatedHours} Dev-Hours</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 pt-3 border-t border-zinc-900">
+                        <span className="text-[10px] text-zinc-650 block uppercase font-mono">Suggested Core Technologies:</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {simulatedQuote?.techSuggested.map((tech, idx) => (
+                            <span key={idx} className="bg-zinc-900 text-zinc-300 font-mono text-[9px] px-2.5 py-1 rounded border border-zinc-850">
+                              {tech}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      <p className="text-zinc-500 text-[10px] font-sans leading-relaxed pt-2 border-t border-zinc-900/60">
+                        A direct alert was dispatched to <strong>exprefgfg@gmail.com</strong> with the subject <strong>"Urgent Portfolio Message"</strong>. Frealem will review the project specifications and respond within 6-12 working hours.
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setInquiryStatus("idle");
+                        setSimulatedQuote(null);
+                        setClientInquiry({
+                          clientName: "",
+                          companyName: "",
+                          clientEmail: "",
+                          projectDescription: "",
+                          projectType: "Full-Stack SaaS",
+                          budgetRange: "$5,000 - $10,000",
+                        });
+                      }}
+                      className="bg-zinc-800 hover:bg-zinc-750 text-zinc-350 hover:text-white font-mono text-2xs uppercase tracking-wider px-5 py-2.5 rounded-xl border border-zinc-700/55 transition cursor-pointer"
+                    >
+                      Submit Another Request
+                    </button>
+                  </div>
+                )}
+
+              </div>
+
+            </div>
           </div>
         )}
 

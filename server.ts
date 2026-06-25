@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { MongoClient, Db } from "mongodb";
+import nodemailer from "nodemailer";
 
 dotenv.config();
 
@@ -207,7 +208,7 @@ let SERVER_SKILLS = [...DEFAULT_SKILLS];
 const DEFAULT_PROFILE_V2 = {
   name: "Frealem Tekalign",
   title: "Full-Stack Software Engineer & AI Prompt Engineer",
-  email: "frealem.tekalign.dev@gmail.com",
+  email: "exprefgfg@gmail.com",
   github: "github.com/frealem-tekalign",
   linkedin: "linkedin.com/in/frealemtekalign",
   upwork: "www.upwork.com/freelancers/~01a58722532efa8600?mp_source=share",
@@ -267,6 +268,7 @@ const DEFAULT_SERVICES = [
 ];
 
 let SERVER_SERVICES = [...DEFAULT_SERVICES];
+let SERVER_INQUIRIES: any[] = [];
 
 // Persistent online cloud database hook Configuration
 const DB_FILE = path.join(process.cwd(), "db_portfolio.json");
@@ -282,7 +284,8 @@ async function saveBackupJSON() {
       profile: SERVER_PROFILE,
       projects: SERVER_PROJECTS,
       skills: SERVER_SKILLS,
-      services: SERVER_SERVICES
+      services: SERVER_SERVICES,
+      inquiries: SERVER_INQUIRIES
     };
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
     console.log("Local backup database flat-file synchronized successfully.");
@@ -297,6 +300,7 @@ async function initDatabase() {
   let localCacheProjects = DEFAULT_PROJECTS;
   let localCacheSkills = DEFAULT_SKILLS;
   let localCacheServices = DEFAULT_SERVICES;
+  let localCacheInquiries: any[] = [];
 
   try {
     if (fs.existsSync(DB_FILE)) {
@@ -306,6 +310,7 @@ async function initDatabase() {
       if (Array.isArray(data.projects)) localCacheProjects = data.projects;
       if (Array.isArray(data.skills)) localCacheSkills = data.skills;
       if (Array.isArray(data.services)) localCacheServices = data.services;
+      if (Array.isArray(data.inquiries)) localCacheInquiries = data.inquiries;
       console.log("Successfully extracted latest customized states from local cache.");
     }
   } catch (e) {
@@ -317,6 +322,7 @@ async function initDatabase() {
   SERVER_PROJECTS = localCacheProjects;
   SERVER_SKILLS = localCacheSkills;
   SERVER_SERVICES = localCacheServices;
+  SERVER_INQUIRIES = localCacheInquiries;
 
   const mUri = process.env.MONGODB_URI;
   if (mUri) {
@@ -421,6 +427,23 @@ async function initDatabase() {
         });
         if (cleanServ.length > 0) {
           await servicesColl.insertMany(cleanServ);
+        }
+      }
+
+      // 5. Inquiries collection: check, load or seed
+      const inquiriesColl = mongoDb.collection("inquiries");
+      const totalInquiries = await inquiriesColl.countDocuments();
+      if (totalInquiries > 0) {
+        console.log(`Found ${totalInquiries} client inquiries in Atlas. Synchronizing in-memory.`);
+        const dbInquiries = await inquiriesColl.find({}).toArray();
+        SERVER_INQUIRIES = dbInquiries.map(i => {
+          const { _id, ...rest } = i as any;
+          return rest;
+        });
+      } else {
+        console.log("No client inquiries found in MongoDB Atlas. Synchronizing flat backups.");
+        if (SERVER_INQUIRIES.length > 0) {
+          await inquiriesColl.insertMany(SERVER_INQUIRIES);
         }
       }
 
@@ -989,17 +1012,226 @@ async function startServer() {
     }
   });
 
-  // API 10: Delete a service package
-  app.delete("/api/services/:id", async (req, res) => {
+  // API 11: Create a client inquiry/message and email it
+  app.post("/api/contact", async (req, res) => {
+    try {
+      const { clientName, clientEmail, companyName, projectType, budgetRange, projectDescription } = req.body;
+      if (!clientName || !clientEmail || !projectDescription) {
+        return res.status(400).json({ error: "Missing required fields: clientName, clientEmail, and projectDescription are required." });
+      }
+
+      const newInquiry = {
+        id: `inq-${Date.now()}`,
+        clientName,
+        companyName: companyName || "N/A",
+        clientEmail,
+        projectDescription,
+        projectType: projectType || "General Consultation",
+        budgetRange: budgetRange || "Not Specified",
+        dateSubmitted: new Date().toISOString(),
+        status: "new"
+      };
+
+      // 1. Save in memory
+      SERVER_INQUIRIES.unshift(newInquiry);
+
+      // 2. Persist to MongoDB Atlas if active
+      if (isMongoActive && mongoDb) {
+        try {
+          const inquiriesColl = mongoDb.collection("inquiries");
+          await inquiriesColl.insertOne({ ...newInquiry });
+          console.log("Inquiry permanently saved to MongoDB Atlas.");
+        } catch (mongoErr) {
+          console.error("Failed to insert inquiry to MongoDB:", mongoErr);
+        }
+      }
+
+      // 3. Save backup JSON
+      await saveBackupJSON();
+
+      // 4. Try to send email to exprefgfg@gmail.com
+      const recipientEmail = "exprefgfg@gmail.com";
+      const subject = "Urgent Portfolio Message";
+      const textBody = `Urgent Portfolio Message!
+      
+You have received a new contract inquiry from your Portfolio website.
+
+--- CLIENT DETAILS ---
+Name: ${clientName}
+Email: ${clientEmail}
+Company: ${companyName || "N/A"}
+Project Type: ${projectType || "General Consultation"}
+Budget Range: ${budgetRange || "Not Specified"}
+Submitted On: ${newInquiry.dateSubmitted}
+
+--- PROJECT DESCRIPTION ---
+${projectDescription}
+
+---
+Please reply to this client at their direct email: ${clientEmail}
+This message is stored permanently in your MongoDB database.`;
+
+      const htmlBody = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 12px; background-color: #fcfcfc;">
+          <h2 style="color: #3b82f6; margin-top: 0; border-bottom: 2px solid #3b82f6; padding-bottom: 8px;">Urgent Portfolio Message</h2>
+          <p style="font-size: 15px; color: #4b5563;">You received a new inquiry from your live portfolio website:</p>
+          
+          <table style="width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 20px;">
+            <tr style="background-color: #f3f4f6;">
+              <td style="padding: 8px 12px; font-weight: bold; width: 35%; color: #374151;">Client Name</td>
+              <td style="padding: 8px 12px; color: #1f2937;">${clientName}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 12px; font-weight: bold; color: #374151;">Client Email</td>
+              <td style="padding: 8px 12px; color: #1f2937;"><a href="mailto:${clientEmail}" style="color: #2563eb;">${clientEmail}</a></td>
+            </tr>
+            <tr style="background-color: #f3f4f6;">
+              <td style="padding: 8px 12px; font-weight: bold; color: #374151;">Company</td>
+              <td style="padding: 8px 12px; color: #1f2937;">${companyName || "N/A"}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 12px; font-weight: bold; color: #374151;">Project Type</td>
+              <td style="padding: 8px 12px; color: #1f2937;">${projectType || "General Consultation"}</td>
+            </tr>
+            <tr style="background-color: #f3f4f6;">
+              <td style="padding: 8px 12px; font-weight: bold; color: #374151;">Budget Range</td>
+              <td style="padding: 8px 12px; color: #1f2937;">${budgetRange || "Not Specified"}</td>
+            </tr>
+          </table>
+          
+          <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 0 8px 8px 0; margin-bottom: 20px;">
+            <h4 style="margin: 0 0 8px 0; color: #1e3a8a;">Project Description:</h4>
+            <p style="margin: 0; font-size: 14px; line-height: 1.6; color: #1e293b; white-space: pre-wrap;">${projectDescription}</p>
+          </div>
+          
+          <div style="font-size: 11px; color: #9ca3af; text-align: center; border-top: 1px solid #e5e7eb; padding-top: 12px; margin-top: 20px;">
+            This inquiry was recorded permanently in your MongoDB Atlas database collection.
+          </div>
+        </div>
+      `;
+
+      let emailSent = false;
+      let emailError = "";
+
+      const resendApiKey = process.env.RESEND_API_KEY;
+      const resendFrom = process.env.RESEND_FROM || "onboarding@resend.dev";
+
+      if (resendApiKey) {
+        try {
+          console.log("Initiating email dispatch via Resend API...");
+          const resendResponse = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${resendApiKey}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              from: `Portfolio <${resendFrom}>`,
+              to: recipientEmail,
+              reply_to: clientEmail,
+              subject: subject,
+              text: textBody,
+              html: htmlBody
+            })
+          });
+
+          if (resendResponse.ok) {
+            const resData = await resendResponse.json() as any;
+            emailSent = true;
+            console.log(`Successfully dispatched real email notification via Resend to ${recipientEmail}. ID: ${resData?.id || "N/A"}`);
+          } else {
+            const errorText = await resendResponse.text();
+            throw new Error(`Resend API returned status ${resendResponse.status}: ${errorText}`);
+          }
+        } catch (resendErr: any) {
+          emailError = resendErr?.message || String(resendErr);
+          console.error("Resend API dispatch error:", resendErr);
+        }
+      }
+
+      // Fallback to SMTP if Resend is not configured or failed
+      if (!emailSent) {
+        const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
+        const smtpPort = parseInt(process.env.SMTP_PORT || "587");
+        const smtpUser = process.env.SMTP_USER || process.env.GMAIL_USER;
+        const smtpPass = process.env.SMTP_PASS || process.env.GMAIL_PASS;
+
+        if (smtpUser && smtpPass) {
+          try {
+            console.log("Attempting SMTP fallback dispatch...");
+            const transporter = nodemailer.createTransport({
+              host: smtpHost,
+              port: smtpPort,
+              secure: smtpPort === 465,
+              auth: {
+                user: smtpUser,
+                pass: smtpPass
+              },
+              timeout: 8000
+            } as any);
+
+            await transporter.sendMail({
+              from: `"${clientName} via Portfolio" <${smtpUser}>`,
+              to: recipientEmail,
+              replyTo: clientEmail,
+              subject: subject,
+              text: textBody,
+              html: htmlBody
+            });
+
+            emailSent = true;
+            emailError = "";
+            console.log(`Successfully dispatched real email notification via SMTP to ${recipientEmail}`);
+          } catch (mailErr: any) {
+            emailError = mailErr?.message || String(mailErr);
+            console.error("Nodemailer real mail dispatch error:", mailErr);
+          }
+        } else if (!resendApiKey) {
+          console.log("No SMTP or Resend credentials configured in environment variables. Simulated email dispatch succeeded.");
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: "Message submitted successfully!",
+        emailSent: emailSent,
+        emailNotification: {
+          recipient: recipientEmail,
+          subject: subject,
+          status: emailSent ? "Dispatched" : (resendApiKey || process.env.SMTP_USER ? `Error: ${emailError}` : "Simulated (Configure RESEND_API_KEY or SMTP in hosting secrets for live email sending)")
+        },
+        inquiry: newInquiry
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // API 12: Get all client inquiries
+  app.get("/api/inquiries", (req, res) => {
+    return res.json({ inquiries: SERVER_INQUIRIES });
+  });
+
+  // API 13: Delete an inquiry
+  app.delete("/api/inquiries/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const idx = SERVER_SERVICES.findIndex(s => s.id === id);
+      const idx = SERVER_INQUIRIES.findIndex(i => i.id === id);
       if (idx !== -1) {
-        SERVER_SERVICES.splice(idx, 1);
-        await saveServicesState();
-        return res.json({ success: true, message: "Service package deleted successfully on the server!" });
+        SERVER_INQUIRIES.splice(idx, 1);
+        
+        if (isMongoActive && mongoDb) {
+          try {
+            const inquiriesColl = mongoDb.collection("inquiries");
+            await inquiriesColl.deleteOne({ id });
+          } catch (mongoErr) {
+            console.error("Failed to delete inquiry in MongoDB:", mongoErr);
+          }
+        }
+        await saveBackupJSON();
+        return res.json({ success: true, message: "Inquiry deleted successfully!" });
       }
-      return res.status(404).json({ error: "Service package not found." });
+      return res.status(404).json({ error: "Inquiry not found." });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }

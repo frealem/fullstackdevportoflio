@@ -4,6 +4,11 @@ export interface Profile {
   email: string;
   github: string;
   linkedin: string;
+  upwork?: string;
+  telegram?: string;
+  phone?: string;
+  customSocialLabel?: string;
+  customSocialUrl?: string;
   bio: string;
   detailedBio: string;
   location: string;
